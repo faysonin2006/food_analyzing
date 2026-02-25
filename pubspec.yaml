@@ -27,9 +27,13 @@ environment:
 # dependencies can be manually updated by changing the version numbers below to
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
+
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  shared_preferences: ^2.5.4
   http: ^1.2.0        # Для запросов к Gateway
   flutter_secure_storage: ^9.0.0 # Для хранения JWT токена
   image_picker: ^1.1.2  # Для выбора фото с камеры/галереи
@@ -62,7 +66,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
-
+  assets:
+    - assets/images/recipe_placeholder1.png
+    - assets/images/recipe_placeholder2.png
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg
