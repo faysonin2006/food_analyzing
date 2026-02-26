@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/tr.dart';
 import '../services/api_service.dart';
+import '../services/likes_service.dart';
 import 'recipe_models.dart';
 
 class _RestrictionTag {
@@ -30,7 +31,9 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   static const Color _accentOrange = Color(0xFFF2A62B);
 
   final api = ApiService();
+  final likes = LikesService.instance;
   late final Future<RecipeDetails?> future;
+  bool _likeBusy = false;
 
   static const List<String> _placeholders = [
     'assets/images/recipe_placeholder1.png',
@@ -40,10 +43,18 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   @override
   void initState() {
     super.initState();
+    likes.addListener(_onLikesChanged);
     future = api.getRecipeDetails(
       recipeId: widget.recipeId,
       seedSummary: widget.seed,
     );
+    likes.ensureLoaded();
+  }
+
+  @override
+  void dispose() {
+    likes.removeListener(_onLikesChanged);
+    super.dispose();
   }
 
   ThemeData get _theme => Theme.of(context);
@@ -74,6 +85,11 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
       : Colors.black.withValues(alpha: 0.62);
 
   bool get _isRu => Localizations.localeOf(context).languageCode == 'ru';
+
+  void _onLikesChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
 
   String _pickPlaceholder(int key) =>
       _placeholders[key.abs() % _placeholders.length];
@@ -450,7 +466,11 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     );
   }
 
-  Widget _topIconButton({required IconData icon, required VoidCallback onTap}) {
+  Widget _topIconButton({
+    required IconData icon,
+    required VoidCallback onTap,
+    Color iconColor = Colors.white,
+  }) {
     return InkWell(
       borderRadius: BorderRadius.circular(10),
       onTap: onTap,
@@ -462,7 +482,23 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
               .withValues(alpha: 0.55),
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Icon(icon, color: Colors.white, size: 20),
+        child: Icon(icon, color: iconColor, size: 20),
+      ),
+    );
+  }
+
+  Future<void> _toggleLike() async {
+    if (_likeBusy) return;
+    setState(() => _likeBusy = true);
+    final ok = await likes.toggle(widget.recipeId);
+    if (!mounted) return;
+    setState(() => _likeBusy = false);
+    if (ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _isRu ? 'Не удалось обновить лайк' : 'Failed to update like',
+        ),
       ),
     );
   }
@@ -592,6 +628,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
 
   Widget _buildDetail(RecipeDetails raw) {
     final r = _mergeWithSeed(raw);
+    final isLiked = likes.isLiked(widget.recipeId);
     final ingredients = r.ingredients;
     final category = _cleanText(r.category);
     final nutrients = _allNutrients(r);
@@ -631,8 +668,13 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
                           top: 14,
                           right: 14,
                           child: _topIconButton(
-                            icon: Icons.favorite_rounded,
-                            onTap: () {},
+                            icon: isLiked
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            iconColor: isLiked
+                                ? const Color(0xFFFF6F7E)
+                                : Colors.white,
+                            onTap: _toggleLike,
                           ),
                         ),
                         Positioned(

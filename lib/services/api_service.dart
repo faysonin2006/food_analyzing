@@ -43,6 +43,9 @@ class ApiService {
   static const String baseUrl =
       'http://192.168.10'
       '.119:8090';
+  // static const String baseUrl =
+  //     'http://172.20.10'
+  //     '.7:8090';
 
   final _storage = const FlutterSecureStorage();
 
@@ -54,7 +57,7 @@ class ApiService {
     if (refresh != null && refresh.isNotEmpty) {
       await _storage.write(key: _kRefreshKey, value: refresh);
     }
-    print('✅ Токены сохранены');
+    print('Tokens saved');
   }
 
   Future<String?> getToken() async => _storage.read(key: _kAccessKey);
@@ -64,7 +67,7 @@ class ApiService {
   Future<void> logout() async {
     await _storage.delete(key: _kAccessKey);
     await _storage.delete(key: _kRefreshKey);
-    print('👋 Выход выполнен');
+    print('Logout completed');
   }
 
   Map<String, dynamic> _extractAuthMap(dynamic decoded) {
@@ -101,7 +104,7 @@ class ApiService {
 
       return allowSuccessWithoutTokens;
     } catch (e) {
-      print('❌ Ошибка парсинга auth ответа: $e');
+      print('Auth response parse error: $e');
       return false;
     }
   }
@@ -109,7 +112,7 @@ class ApiService {
   Future<bool> _refreshToken() async {
     final refresh = await _getRefreshToken();
     if (refresh == null || refresh.isEmpty) {
-      print('❌ Нет refresh токена');
+      print('No refresh token');
       return false;
     }
 
@@ -119,7 +122,7 @@ class ApiService {
         url,
         headers: {'Content-Type': 'application/json', 'Refresh-Token': refresh},
       );
-      print('🔄 Refresh: ${response.statusCode}');
+      print('Refresh: ${response.statusCode}');
 
       if (response.statusCode == 200) {
         final map = _extractAuthMap(jsonDecode(response.body));
@@ -140,7 +143,7 @@ class ApiService {
       }
       return false;
     } catch (e) {
-      print('❌ Ошибка refresh: $e');
+      print('Refresh error: $e');
       return false;
     }
   }
@@ -164,7 +167,7 @@ class ApiService {
         response = await doGet();
       } else if (response.statusCode == 401) {
         await logout();
-        throw Exception('Не удалось обновить токен');
+        throw Exception('Failed to refresh token');
       }
     }
     return response;
@@ -181,7 +184,7 @@ class ApiService {
         response = await doPut();
       } else if (response.statusCode == 401) {
         await logout();
-        throw Exception('Не удалось обновить токен');
+        throw Exception('Failed to refresh token');
       }
     }
     return response;
@@ -198,7 +201,24 @@ class ApiService {
         response = await doPost();
       } else if (response.statusCode == 401) {
         await logout();
-        throw Exception('Не удалось обновить токен');
+        throw Exception('Failed to refresh token');
+      }
+    }
+    return response;
+  }
+
+  Future<http.Response> _deleteWithAuth(Uri url) async {
+    Future<http.Response> doDelete() async =>
+        http.delete(url, headers: await _getHeaders());
+
+    var response = await doDelete();
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      final ok = await _refreshToken();
+      if (ok) {
+        response = await doDelete();
+      } else if (response.statusCode == 401) {
+        await logout();
+        throw Exception('Failed to refresh token');
       }
     }
     return response;
@@ -219,7 +239,7 @@ class ApiService {
           headers: {'Content-Type': 'application/json'},
           body: body,
         );
-        print('🔑 Логин POST $url: ${postResp.statusCode}');
+        print('Login POST $url: ${postResp.statusCode}');
         if (await _saveTokensFromAuthResponse(postResp)) return true;
 
         if (postResp.statusCode == 405) {
@@ -228,13 +248,13 @@ class ApiService {
             headers: {'Content-Type': 'application/json'},
             body: body,
           );
-          print('🔑 Логин PUT $url: ${putResp.statusCode}');
+          print('Login PUT $url: ${putResp.statusCode}');
           if (await _saveTokensFromAuthResponse(putResp)) return true;
         }
 
-        print('❌ Логин failed [$url]: ${postResp.body}');
+        print('Login failed [$url]: ${postResp.body}');
       } catch (e) {
-        print('❌ Ошибка логина [$url]: $e');
+        print('Login error [$url]: $e');
       }
     }
 
@@ -261,7 +281,7 @@ class ApiService {
           headers: {'Content-Type': 'application/json'},
           body: body,
         );
-        print('📝 Регистрация POST $url: ${postResp.statusCode}');
+        print('Register POST $url: ${postResp.statusCode}');
         if (await _saveTokensFromAuthResponse(
           postResp,
           allowSuccessWithoutTokens: true,
@@ -275,7 +295,7 @@ class ApiService {
             headers: {'Content-Type': 'application/json'},
             body: body,
           );
-          print('📝 Регистрация PUT $url: ${putResp.statusCode}');
+          print('Register PUT $url: ${putResp.statusCode}');
           if (await _saveTokensFromAuthResponse(
             putResp,
             allowSuccessWithoutTokens: true,
@@ -284,9 +304,9 @@ class ApiService {
           }
         }
 
-        print('❌ Регистрация failed [$url]: ${postResp.body}');
+        print('Register failed [$url]: ${postResp.body}');
       } catch (e) {
-        print('❌ Ошибка регистрации [$url]: $e');
+        print('Register error [$url]: $e');
       }
     }
 
@@ -297,11 +317,11 @@ class ApiService {
     final url = Uri.parse('$baseUrl/api/profiles/me');
     try {
       final response = await _getWithAuth(url);
-      print('👤 Профиль: ${response.statusCode}');
+      print('Profile: ${response.statusCode}');
       if (response.statusCode == 200) return jsonDecode(response.body);
-      print('❌ Профиль failed: ${response.body}');
+      print('Profile failed: ${response.body}');
     } catch (e) {
-      print('❌ Ошибка профиля: $e');
+      print('Profile error: $e');
     }
     return null;
   }
@@ -310,10 +330,10 @@ class ApiService {
     final url = Uri.parse('$baseUrl/api/profiles/me');
     try {
       final response = await _putWithAuth(url, body: jsonEncode(data));
-      print('📝 Профиль обновлен: ${response.statusCode}');
+      print('Profile updated: ${response.statusCode}');
       return response.statusCode == 200;
     } catch (e) {
-      print('❌ Ошибка обновления профиля: $e');
+      print('Profile update error: $e');
       return false;
     }
   }
@@ -350,11 +370,9 @@ class ApiService {
       var response = await sendOnce(url, method, fileField);
       var body = await response.stream.bytesToString();
 
-      print(
-        '🖼️ Аватар $method $url (field=$fileField): ${response.statusCode}',
-      );
+      print('Avatar $method $url (field=$fileField): ${response.statusCode}');
       if (body.isNotEmpty) {
-        print('🖼️ Ответ аватара: $body');
+        print('Avatar response: $body');
       }
 
       if (response.statusCode == 401) {
@@ -366,10 +384,10 @@ class ApiService {
         response = await sendOnce(url, method, fileField);
         body = await response.stream.bytesToString();
         print(
-          '🖼️ Аватар retry $method $url (field=$fileField): ${response.statusCode}',
+          'Avatar retry $method $url (field=$fileField): ${response.statusCode}',
         );
         if (body.isNotEmpty) {
-          print('🖼️ Ответ аватара retry: $body');
+          print('Avatar retry response: $body');
         }
       }
 
@@ -394,9 +412,69 @@ class ApiService {
       }
       return false;
     } catch (e) {
-      print('❌ Ошибка аватара: $e');
+      print('Avatar error: $e');
       return false;
     }
+  }
+
+  Future<bool> likeRecipe(int recipeId) async {
+    final urls = <Uri>[
+      Uri.parse('$baseUrl/api/profiles/likes/$recipeId'),
+      Uri.parse('$baseUrl/api/likes/$recipeId'),
+    ];
+
+    for (final url in urls) {
+      try {
+        final response = await _postWithAuth(url);
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          return true;
+        }
+      } catch (e) {
+        print('likeRecipe error [$url]: $e');
+      }
+    }
+    return false;
+  }
+
+  Future<bool> unlikeRecipe(int recipeId) async {
+    final urls = <Uri>[
+      Uri.parse('$baseUrl/api/profiles/likes/$recipeId'),
+      Uri.parse('$baseUrl/api/likes/$recipeId'),
+    ];
+
+    for (final url in urls) {
+      try {
+        final response = await _deleteWithAuth(url);
+        if (response.statusCode == 200 ||
+            response.statusCode == 204 ||
+            response.statusCode == 404) {
+          return true;
+        }
+      } catch (e) {
+        print('unlikeRecipe error [$url]: $e');
+      }
+    }
+    return false;
+  }
+
+  Future<List<Map<String, dynamic>>> getLikedRecipes() async {
+    final urls = <Uri>[
+      Uri.parse('$baseUrl/api/profiles/likes'),
+      Uri.parse('$baseUrl/api/likes'),
+    ];
+
+    for (final url in urls) {
+      try {
+        final response = await _getWithAuth(url);
+        if (response.statusCode != 200) continue;
+        final decoded = jsonDecode(response.body);
+        final extracted = _extractLikesList(decoded);
+        if (extracted.isNotEmpty) return extracted;
+      } catch (e) {
+        print('getLikedRecipes error [$url]: $e');
+      }
+    }
+    return const [];
   }
 
   Future<String?> startFoodAnalysis(
@@ -411,13 +489,13 @@ class ApiService {
       }
     }
     if (token == null) {
-      print('❌ Нет токена для анализа!');
+      print('No token for analysis');
       return null;
     }
 
-    print('🚀 Запуск анализа...');
+    print('Starting analysis...');
     print(
-      '📁 Файл: ${imageFile.name}, размер: ${(await File(imageFile.path).length()) / 1024} KB',
+      'File: ${imageFile.name}, size: ${(await File(imageFile.path).length()) / 1024} KB',
     );
 
     final url = Uri.parse('$baseUrl/api/food/analyze');
@@ -445,28 +523,28 @@ class ApiService {
           response = await sendOnce();
         } else if (response.statusCode == 401) {
           await logout();
-          print('❌ Не удалось обновить токен для запуска анализа');
+          print('Failed to refresh token before analysis start');
           return null;
         }
       }
 
       final respStr = await response.stream.bytesToString();
-      print('🚀 Анализ запущен: ${response.statusCode}');
-      print('📥 Ответ: $respStr');
+      print('Analysis started: ${response.statusCode}');
+      print('Response: $respStr');
 
       if (response.statusCode == 200 || response.statusCode == 202) {
         final data = jsonDecode(respStr);
         final id = data['id']?.toString();
         if (id != null) {
-          print('✅ ID анализа: $id');
+          print('Analysis ID: $id');
           return id;
         }
-        print('❌ Нет ID в ответе: $respStr');
+        print('No analysis ID in response: $respStr');
       } else {
-        print('❌ Ошибка запуска (${response.statusCode}): $respStr');
+        print('Analysis start failed (${response.statusCode}): $respStr');
       }
     } catch (e) {
-      print('❌ Ошибка запуска анализа: $e');
+      print('Analysis start error: $e');
     }
     return null;
   }
@@ -475,7 +553,7 @@ class ApiService {
     final url = Uri.parse('$baseUrl/api/food/analysis/$analysisId');
     try {
       final response = await _getWithAuth(url);
-      print('📊 Анализ $analysisId: ${response.statusCode}');
+      print('Analysis $analysisId: ${response.statusCode}');
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -490,13 +568,13 @@ class ApiService {
           'extra_info': data['extraInfo'] ?? data['extra_info'],
           'image_url': data['imageUrl'] ?? data['image_url'],
         };
-        print('✅ Нормализованный: ${normalized['dish_name']}');
+        print('Normalized dish: ${normalized['dish_name']}');
         return normalized;
       }
 
-      print('❌ Результат failed (${response.statusCode}): ${response.body}');
+      print('Result failed (${response.statusCode}): ${response.body}');
     } catch (e) {
-      print('❌ Ошибка результата: $e');
+      print('Result error: $e');
     }
     return null;
   }
@@ -507,7 +585,7 @@ class ApiService {
     );
     try {
       final response = await _getWithAuth(url);
-      print('📈 История: ${response.statusCode}');
+      print('History: ${response.statusCode}');
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
         if (decoded is List) {
@@ -523,10 +601,10 @@ class ApiService {
             return List<dynamic>.from(candidate);
           }
         }
-        print('⚠️ Неожиданный формат истории: ${response.body}');
+        print('Unexpected history format: ${response.body}');
       }
     } catch (e) {
-      print('❌ Ошибка истории: $e');
+      print('History error: $e');
     }
     return null;
   }
@@ -535,7 +613,7 @@ class ApiService {
     XFile imageFile, {
     Duration timeout = const Duration(seconds: 45),
   }) async {
-    print('🔄 Синхронный анализ (max $timeout)...');
+    print('Synchronous analysis (max $timeout)...');
     final id = await startFoodAnalysis(imageFile);
     if (id == null) return null;
 
@@ -547,12 +625,12 @@ class ApiService {
       if (result != null &&
           result['status'] == 'COMPLETED' &&
           result['dish_name'] != null) {
-        print('✅ Синхронный анализ завершён: ${result['dish_name']}');
+        print('Synchronous analysis completed: ${result['dish_name']}');
         return result;
       }
     }
 
-    print('⏰ Синхронный таймаут');
+    print('Synchronous analysis timeout');
     return null;
   }
 
@@ -628,7 +706,7 @@ class ApiService {
 
       return null;
     } catch (e) {
-      print('❌ Ошибка getRecipeDetails: $e');
+      print('getRecipeDetails error: $e');
       return null;
     }
   }
@@ -790,7 +868,7 @@ class ApiService {
         );
       }
     } catch (e) {
-      print('❌ Ошибка _searchDbRecipesPageRaw: $e');
+      print('_searchDbRecipesPageRaw error: $e');
     }
 
     return const _RecipeRawPageResult(items: []);
@@ -905,6 +983,37 @@ class ApiService {
     }
 
     return [];
+  }
+
+  List<Map<String, dynamic>> _extractLikesList(dynamic decoded) {
+    Map<String, dynamic> asMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) return Map<String, dynamic>.from(value);
+      return {'recipeId': value};
+    }
+
+    bool hasRecipeId(Map<String, dynamic> map) {
+      return map.containsKey('recipeId') ||
+          map.containsKey('recipe_id') ||
+          map.containsKey('id');
+    }
+
+    if (decoded is List) {
+      return decoded.map(asMap).where(hasRecipeId).toList();
+    }
+
+    if (decoded is Map<String, dynamic>) {
+      for (final key in ['content', 'results', 'data', 'items', 'likes']) {
+        final value = decoded[key];
+        if (value is List) {
+          return value.map(asMap).where(hasRecipeId).toList();
+        }
+      }
+
+      if (hasRecipeId(decoded)) return [decoded];
+    }
+
+    return const [];
   }
 
   String? _dietToDbConstraint(String? diet) {

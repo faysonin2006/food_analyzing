@@ -656,7 +656,7 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                '✅ ${result['dish_name']} | $cal ${tr(context, 'kcal')}',
+                '${result['dish_name']} | $cal ${tr(context, 'kcal')}',
               ),
               backgroundColor: _cs.secondary,
               duration: const Duration(seconds: 3),

@@ -5,6 +5,7 @@ import '../core/app_scope.dart';
 import '../core/settings_sheet.dart';
 import '../core/tr.dart';
 import '../services/api_service.dart';
+import '../services/likes_service.dart';
 import 'recipe_detail_screen.dart';
 import 'recipe_models.dart';
 
@@ -21,6 +22,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
   static const int _pageSize = 20;
 
   final api = ApiService();
+  final likes = LikesService.instance;
   final titleCtrl = TextEditingController();
   final keywordCtrl = TextEditingController();
   final pageCtrl = TextEditingController(text: '1');
@@ -505,9 +507,11 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
   @override
   void initState() {
     super.initState();
+    likes.addListener(_onLikesChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _loadProfileSummary();
+      likes.ensureLoaded();
       _searchFromFirstPage();
     });
   }
@@ -537,11 +541,17 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
 
   @override
   void dispose() {
+    likes.removeListener(_onLikesChanged);
     titleCtrl.dispose();
     keywordCtrl.dispose();
     pageCtrl.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onLikesChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   void _dismissKeyboard() {
@@ -707,6 +717,18 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     }
     if (page == currentPage) return;
     await search(page: page);
+  }
+
+  Future<void> _toggleLike(int recipeId) async {
+    final ok = await likes.toggle(recipeId);
+    if (ok || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _isRu ? 'Не удалось обновить лайк' : 'Failed to update like',
+        ),
+      ),
+    );
   }
 
   String _titleCase(String s) => s
@@ -1182,6 +1204,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
 
   Widget _buildRecipeCard(RecipeSummary recipe) {
     final totalTime = _totalTimeLabel(recipe);
+    final isLiked = likes.isLiked(recipe.id);
     final ingredientsText = _isRu
         ? '${recipe.ingredientsCount} ингредиентов'
         : '${recipe.ingredientsCount} ingredients';
@@ -1247,10 +1270,30 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
                 Positioned(
                   right: 10,
                   bottom: 10,
-                  child: Icon(
-                    Icons.favorite_rounded,
-                    size: 24,
-                    color: const Color(0xFFFF4F65),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () => _toggleLike(recipe.id),
+                      child: Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.32),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(
+                          isLiked
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          size: 22,
+                          color: isLiked
+                              ? const Color(0xFFFF4F65)
+                              : Colors.white.withValues(alpha: 0.95),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -1405,6 +1448,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
                 child: RefreshIndicator(
                   onRefresh: () async {
                     await _loadProfileSummary();
+                    await likes.refresh();
                     await _searchFromFirstPage();
                   },
                   child: ListView(
