@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_theme.dart';
+import '../core/atelier_ui.dart';
 import '../core/tr.dart';
-import '../services/api_service.dart';
-import '../services/likes_service.dart';
+import '../repositories/app_repository.dart';
+import '../features/likes/likes.dart';
 import 'recipe_models.dart';
+part "recipe_detail/recipe_detail_ui.dart";
 
 class _RestrictionTag {
   final String key;
@@ -28,12 +31,68 @@ class RecipeDetailScreen extends StatefulWidget {
 }
 
 class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
-  static const Color _accentOrange = Color(0xFFF2A62B);
+  static const Color _accentOrange = AppTheme.atelierGreen;
+  static const int _minIngredientTokenLength = 3;
+  static const int _minIngredientPrefixMatchLength = 5;
+  static const int _maxIngredientPrefixExtraChars = 3;
+  static const Map<String, String> _restrictionAliases = <String, String>{
+    'TYPE_1_DIABETES': 'DIABETES_TYPE_1',
+    'TYPE_2_DIABETES': 'DIABETES_TYPE_2',
+    'GLUTEN_FREE': 'GLUTEN',
+    'LACTOSE_FREE': 'LACTOSE',
+    'DAIRY_FREE': 'LACTOSE',
+    'KETOGENIC': 'KETO',
+  };
+  static const List<String> _ingredientCanonicalSuffixes = [
+    'иями',
+    'ями',
+    'ами',
+    'ого',
+    'его',
+    'ому',
+    'ему',
+    'ыми',
+    'ими',
+    'ов',
+    'ев',
+    'ей',
+    'ом',
+    'ем',
+    'ам',
+    'ям',
+    'ах',
+    'ях',
+    'ую',
+    'юю',
+    'ый',
+    'ий',
+    'ой',
+    'ая',
+    'яя',
+    'ое',
+    'ее',
+    'ые',
+    'ие',
+    'ых',
+    'их',
+    'es',
+    's',
+    'ы',
+    'и',
+    'ь',
+  ];
 
-  final api = ApiService();
+  final AppRepository repository = AppRepository.instance;
   final likes = LikesService.instance;
   late final Future<RecipeDetails?> future;
   bool _likeBusy = false;
+  bool _addingToShopping = false;
+  bool _pantryMatchesReady = false;
+  bool _profileRestrictionsReady = false;
+  Set<String> _pantryNames = const {};
+  Set<String> _profileDietKeys = const {};
+  Set<String> _profileAllergyKeys = const {};
+  Set<String> _profileHealthKeys = const {};
 
   static const List<String> _placeholders = [
     'assets/images/recipe_placeholder1.png',
@@ -44,11 +103,13 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   void initState() {
     super.initState();
     likes.addListener(_onLikesChanged);
-    future = api.getRecipeDetails(
+    future = repository.getRecipeDetails(
       recipeId: widget.recipeId,
       seedSummary: widget.seed,
     );
     likes.ensureLoaded();
+    _loadPantryMatches();
+    _loadProfileRestrictions();
   }
 
   @override
@@ -63,18 +124,17 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
 
   bool get _isDarkTheme => _theme.brightness == Brightness.dark;
 
-  Color get _screenBackground =>
-      _isDarkTheme ? _theme.scaffoldBackgroundColor : const Color(0xFFEED0A5);
+  Color get _screenBackground => _theme.scaffoldBackgroundColor;
 
   Color get _sheetBackground =>
-      _isDarkTheme ? _colorScheme.surface : const Color(0xFFEDEDEF);
+      _isDarkTheme ? _colorScheme.surface : const Color(0xFFF2F1EC);
 
   Color get _cardBackground =>
-      _isDarkTheme ? _colorScheme.surfaceContainer : const Color(0xFFF4F4F5);
+      _isDarkTheme ? _colorScheme.surfaceContainer : Colors.white;
 
   Color get _softCardBackground => _isDarkTheme
       ? _colorScheme.surfaceContainerHighest
-      : const Color(0xFFF0E4D2);
+      : const Color(0xFFF5F4EF);
 
   Color get _outlineColor => _isDarkTheme
       ? _colorScheme.outlineVariant.withValues(alpha: 0.55)
@@ -86,9 +146,51 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
 
   bool get _isRu => Localizations.localeOf(context).languageCode == 'ru';
 
-  void _onLikesChanged() {
+  void _safeSetState(VoidCallback fn) {
     if (!mounted) return;
-    setState(() {});
+    setState(fn);
+  }
+
+  void _onLikesChanged() {
+    _safeSetState(() {});
+  }
+
+  Future<void> _loadPantryMatches() async {
+    try {
+      final pantryItems = await repository.getPantryItems();
+      if (!mounted) return;
+      final names = pantryItems
+          .map((item) => _normalizeIngredientText(item['name']?.toString()))
+          .where((value) => value.isNotEmpty)
+          .toSet();
+      _safeSetState(() {
+        _pantryNames = names;
+        _pantryMatchesReady = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      _safeSetState(() => _pantryMatchesReady = true);
+    }
+  }
+
+  Future<void> _loadProfileRestrictions() async {
+    try {
+      final profile = await repository.getProfile();
+      if (!mounted) return;
+      _safeSetState(() {
+        _profileDietKeys = _profileTagSet(
+          profile?['dietPreferences'] ?? profile?['diet_preferences'],
+        );
+        _profileAllergyKeys = _profileTagSet(profile?['allergies']);
+        _profileHealthKeys = _profileTagSet(
+          profile?['healthConditions'] ?? profile?['health_conditions'],
+        );
+        _profileRestrictionsReady = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      _safeSetState(() => _profileRestrictionsReady = true);
+    }
   }
 
   String _pickPlaceholder(int key) =>
@@ -104,6 +206,522 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   String? _cleanText(String? value) {
     final v = value?.trim() ?? '';
     return v.isEmpty ? null : v;
+  }
+
+  String _normalizeFractionSlash(String text) {
+    return text.replaceAllMapped(
+      RegExp(r'(\d+)\s*/\s*(\d+)'),
+      (m) => '${m.group(1)}⁄${m.group(2)}',
+    );
+  }
+
+  String? _quantityDisplay(IngredientItem item) {
+    String? quantity = _cleanText(item.quantityText);
+    if (quantity == null) {
+      final qValue = item.quantityValue;
+      if (qValue == null) return null;
+      if ((qValue - qValue.roundToDouble()).abs() < 0.0000001) {
+        quantity = qValue.round().toString();
+      } else {
+        var text = qValue.toStringAsFixed(4);
+        text = text.replaceFirst(RegExp(r'0+$'), '');
+        text = text.replaceFirst(RegExp(r'\.$'), '');
+        quantity = text;
+      }
+    }
+
+    final unit = _cleanText(item.unit);
+    if (unit != null && unit.isNotEmpty) {
+      final normalized = quantity.toLowerCase();
+      final unitNormalized = unit.toLowerCase();
+      if (!normalized.contains(unitNormalized)) {
+        quantity = '$quantity $unit';
+      }
+    }
+
+    return quantity;
+  }
+
+  bool _startsWithNumber(String text) {
+    final normalized = text.replaceAll('⁄', '/');
+    final m = RegExp(
+      r'^\s*[-+]?\d+(?:[.,]\d+)?(?:\s+\d+/\d+|/\d+)?\b',
+    ).firstMatch(normalized);
+    return m != null;
+  }
+
+  String _collapseDuplicateLeadingNumber(String text) {
+    final normalized = text.replaceAll('⁄', '/');
+    final match = RegExp(
+      r'^\s*([-+]?\d+(?:[.,]\d+)?(?:\s+\d+/\d+|/\d+)?)\s+'
+      r'([-+]?\d+(?:[.,]\d+)?(?:\s+\d+/\d+|/\d+)?)\b',
+    ).firstMatch(normalized);
+    if (match == null) return text;
+
+    final a = match.group(1)!.trim().replaceAll(',', '.');
+    final b = match.group(2)!.trim().replaceAll(',', '.');
+    if (a != b) return text;
+
+    return normalized.replaceFirst(
+      RegExp(r'^\s*' + RegExp.escape(match.group(1)!) + r'\s+'),
+      '',
+    );
+  }
+
+  String _normalizeSpaces(String text) =>
+      text.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+  String _ingredientLineText(IngredientItem item) {
+    final quantity = _quantityDisplay(item);
+    final raw = _cleanText(item.rawText);
+    var text =
+        raw ??
+        _cleanText(item.ingredient) ??
+        [
+          _cleanText(item.unit),
+          _cleanText(item.ingredient),
+        ].whereType<String>().join(' ');
+
+    text = _normalizeSpaces(text);
+    text = _collapseDuplicateLeadingNumber(text);
+
+    if (quantity != null && !_startsWithNumber(text)) {
+      text = '$quantity $text'.trim();
+    }
+
+    text = _normalizeFractionSlash(_normalizeSpaces(text));
+    return text.isEmpty ? '-' : text;
+  }
+
+  String _ingredientNameText(IngredientItem item) {
+    final ingredient = _cleanText(item.ingredient);
+    final note = _cleanText(item.note);
+    if (ingredient != null && ingredient.isNotEmpty) {
+      if (note != null && note.isNotEmpty) {
+        return '$ingredient, $note';
+      }
+      return ingredient;
+    }
+
+    final quantity = _quantityDisplay(item);
+    final line = _ingredientLineText(item);
+    var cleaned = line.replaceFirst(
+      RegExp('^\\s*${RegExp.escape(quantity ?? '')}\\s*'),
+      '',
+    );
+    final unit = _cleanText(item.unit);
+    if (unit != null && unit.isNotEmpty) {
+      cleaned = cleaned.replaceFirst(
+        RegExp('^\\s*${RegExp.escape(unit)}\\s*', caseSensitive: false),
+        '',
+      );
+    }
+    cleaned = _normalizeSpaces(cleaned);
+    return cleaned.isEmpty ? line : cleaned;
+  }
+
+  String _canonicalIngredientToken(String token) {
+    if (token.isEmpty) return token;
+    if (token.endsWith('ies') && token.length > _minIngredientTokenLength + 2) {
+      return '${token.substring(0, token.length - 3)}y';
+    }
+    for (final suffix in _ingredientCanonicalSuffixes) {
+      if (!token.endsWith(suffix)) continue;
+      final trimmed = token.substring(0, token.length - suffix.length);
+      if (trimmed.length >= _minIngredientTokenLength) {
+        return trimmed;
+      }
+    }
+    return token;
+  }
+
+  String _normalizeIngredientText(String? value) {
+    if (value == null) return '';
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^\p{L}\p{Nd}\s]', unicode: true), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  String _normalizeRestrictionKey(String? value) {
+    final raw = value?.trim() ?? '';
+    if (raw.isEmpty) return '';
+    final normalized = raw
+        .toUpperCase()
+        .replaceAll(RegExp(r'[^A-Z0-9]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_|_$'), '');
+    return _restrictionAliases[normalized] ?? normalized;
+  }
+
+  String _extractProfileTagToken(dynamic value) {
+    if (value == null) return '';
+    if (value is String) {
+      return _normalizeRestrictionKey(value);
+    }
+    if (value is Map) {
+      final rawToken =
+          value['id'] ??
+          value['name'] ??
+          value['key'] ??
+          value['value'] ??
+          value['code'];
+      return _normalizeRestrictionKey(rawToken?.toString());
+    }
+    return _normalizeRestrictionKey(value.toString());
+  }
+
+  Set<String> _profileTagSet(dynamic value) {
+    if (value is! List) return <String>{};
+    final result = <String>{};
+    for (final item in value) {
+      final token = _extractProfileTagToken(item);
+      if (token.isNotEmpty) {
+        result.add(token);
+      }
+    }
+    return result;
+  }
+
+  bool _matchesProfileRestriction(String key, String type) {
+    final normalizedKey = _normalizeRestrictionKey(key);
+    if (normalizedKey.isEmpty) return false;
+    final normalizedType = _normalizeRestrictionKey(type);
+
+    if (normalizedType.contains('DIET')) {
+      return _profileDietKeys.contains(normalizedKey);
+    }
+    if (normalizedType.contains('ALLERGY')) {
+      return _profileAllergyKeys.contains(normalizedKey);
+    }
+    if (normalizedType.contains('HEALTH') ||
+        normalizedType.contains('CONDITION')) {
+      return _profileHealthKeys.contains(normalizedKey);
+    }
+
+    return _profileDietKeys.contains(normalizedKey) ||
+        _profileAllergyKeys.contains(normalizedKey) ||
+        _profileHealthKeys.contains(normalizedKey);
+  }
+
+  List<String> _ingredientTokens(String value) => value
+      .split(RegExp(r'\s+'))
+      .map((token) => token.trim())
+      .where((token) => token.length >= _minIngredientTokenLength)
+      .toList();
+
+  bool _hasMeaningfulIngredientPhraseOverlap(String left, String right) {
+    if (!left.contains(' ') && !right.contains(' ')) {
+      return false;
+    }
+    final shorterLength = left.length < right.length
+        ? left.length
+        : right.length;
+    if (shorterLength < _minIngredientPrefixMatchLength) {
+      return false;
+    }
+    return left.contains(right) || right.contains(left);
+  }
+
+  bool _hasSafeIngredientPrefixOverlap(String left, String right) {
+    final shorter = left.length <= right.length ? left : right;
+    final longer = identical(shorter, left) ? right : left;
+    if (shorter.length < _minIngredientPrefixMatchLength) {
+      return false;
+    }
+    if (!longer.startsWith(shorter)) {
+      return false;
+    }
+    return longer.length - shorter.length <= _maxIngredientPrefixExtraChars;
+  }
+
+  bool _ingredientTokensPartiallyMatch(String left, String right) {
+    if (left == right) return true;
+
+    final leftCanonical = _canonicalIngredientToken(left);
+    final rightCanonical = _canonicalIngredientToken(right);
+    if (leftCanonical == rightCanonical) {
+      return true;
+    }
+
+    return _hasSafeIngredientPrefixOverlap(left, right) ||
+        _hasSafeIngredientPrefixOverlap(leftCanonical, rightCanonical);
+  }
+
+  bool _ingredientsCompatible(String ingredientName, String pantryName) {
+    if (ingredientName == pantryName) {
+      return true;
+    }
+    if (_hasMeaningfulIngredientPhraseOverlap(ingredientName, pantryName)) {
+      return true;
+    }
+    final ingredientTokens = _ingredientTokens(ingredientName);
+    final pantryTokens = _ingredientTokens(pantryName);
+    for (final ingredientToken in ingredientTokens) {
+      for (final pantryToken in pantryTokens) {
+        if (_ingredientTokensPartiallyMatch(ingredientToken, pantryToken)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool _ingredientInPantry(IngredientItem item) {
+    if (_pantryNames.isEmpty) return false;
+    final candidates = <String>{
+      _normalizeIngredientText(item.ingredient),
+      _normalizeIngredientText(item.rawText),
+      _normalizeIngredientText(_ingredientNameText(item)),
+      _normalizeIngredientText(_ingredientLineText(item)),
+    }..removeWhere((value) => value.isEmpty);
+
+    for (final candidate in candidates) {
+      for (final pantryName in _pantryNames) {
+        if (_ingredientsCompatible(candidate, pantryName)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  int _pantryMatchCount(List<IngredientItem> ingredients) =>
+      ingredients.where(_ingredientInPantry).length;
+
+  List<IngredientItem> _missingIngredients(List<IngredientItem> ingredients) =>
+      ingredients.where((item) => !_ingredientInPantry(item)).toList();
+
+  double? _shoppingQuantityValue(IngredientItem item) {
+    if (item.quantityValue != null) {
+      return item.quantityValue;
+    }
+    final text = item.quantityText?.trim().replaceAll(',', '.');
+    if (text == null || text.isEmpty) return null;
+    return double.tryParse(text);
+  }
+
+  Map<String, dynamic> _shoppingPayloadForIngredient(IngredientItem item) {
+    final payload = <String, dynamic>{
+      'name': _ingredientNameText(item).trim(),
+      'quantity': _shoppingQuantityValue(item),
+      'unit': _cleanText(item.unit),
+    };
+    payload.removeWhere(
+      (key, value) =>
+          value == null || (value is String && value.trim().isEmpty),
+    );
+    return payload;
+  }
+
+  Future<List<IngredientItem>?> _pickIngredientsForShopping(
+    List<IngredientItem> ingredients,
+  ) {
+    final selected = List<bool>.filled(ingredients.length, true);
+    return showModalBottomSheet<List<IngredientItem>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            final selectedCount = selected.where((value) => value).length;
+
+            Widget ingredientRow(int index) {
+              final item = ingredients[index];
+              final isSelected = selected[index];
+              final quantity = _quantityDisplay(item);
+              final name = _ingredientNameText(item);
+
+              return InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: () => setSheetState(() => selected[index] = !isSelected),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? _accentOrange.withValues(alpha: 0.08)
+                        : _softCardBackground,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: isSelected
+                          ? _accentOrange.withValues(alpha: 0.28)
+                          : _outlineColor,
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Checkbox(
+                        value: isSelected,
+                        activeColor: _accentOrange,
+                        onChanged: (value) => setSheetState(
+                          () => selected[index] = value ?? false,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              name,
+                              style: TextStyle(
+                                color: _colorScheme.onSurface,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            if (quantity != null && quantity.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                quantity,
+                                style: TextStyle(
+                                  color: _mutedTextColor,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            return AtelierSheetFrame(
+              title: _isRu ? 'Выберите ингредиенты' : 'Choose ingredients',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _isRu
+                              ? 'Выбрано: $selectedCount из ${ingredients.length}'
+                              : 'Selected: $selectedCount of ${ingredients.length}',
+                          style: TextStyle(
+                            color: _mutedTextColor,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => setSheetState(() {
+                          for (var i = 0; i < selected.length; i++) {
+                            selected[i] = true;
+                          }
+                        }),
+                        child: Text(_isRu ? 'Все' : 'All'),
+                      ),
+                      TextButton(
+                        onPressed: () => setSheetState(() {
+                          for (var i = 0; i < selected.length; i++) {
+                            selected[i] = false;
+                          }
+                        }),
+                        child: Text(_isRu ? 'Снять' : 'None'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  ...List.generate(
+                    ingredients.length,
+                    (index) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: ingredientRow(index),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.of(sheetContext).pop(),
+                          child: Text(_isRu ? 'Отмена' : 'Cancel'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: selectedCount == 0
+                              ? null
+                              : () => Navigator.of(sheetContext).pop([
+                                  for (var i = 0; i < ingredients.length; i++)
+                                    if (selected[i]) ingredients[i],
+                                ]),
+                          child: Text(_isRu ? 'Добавить' : 'Add selected'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _addMissingToShopping(List<IngredientItem> ingredients) async {
+    if (_addingToShopping) return;
+    final missingIngredients = _missingIngredients(ingredients);
+    if (missingIngredients.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _isRu
+                ? 'Все ингредиенты уже есть в кладовой'
+                : 'All ingredients are already in the pantry',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final selectedIngredients = await _pickIngredientsForShopping(
+      missingIngredients,
+    );
+    if (!mounted ||
+        selectedIngredients == null ||
+        selectedIngredients.isEmpty) {
+      return;
+    }
+
+    _safeSetState(() => _addingToShopping = true);
+    var addedCount = 0;
+    for (final ingredient in selectedIngredients) {
+      final payload = _shoppingPayloadForIngredient(ingredient);
+      if ((payload['name']?.toString().trim() ?? '').isEmpty) {
+        continue;
+      }
+      final result = await repository.createShoppingItem(payload);
+      if (result != null) {
+        addedCount++;
+      }
+    }
+    if (!mounted) return;
+    _safeSetState(() => _addingToShopping = false);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _isRu
+              ? 'В shopping list добавлено: $addedCount'
+              : 'Added to shopping list: $addedCount',
+        ),
+      ),
+    );
   }
 
   bool _isInvalidTimeText(String text) {
@@ -348,6 +966,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
       for (final v in values) {
         final key = v.trim();
         if (key.isEmpty) continue;
+        if (!_matchesProfileRestriction(key, type)) continue;
         out.add(_RestrictionTag(key: key, type: type, status: status));
       }
     }
@@ -360,10 +979,12 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     for (final c in r.constraints) {
       final key = c.key.trim();
       if (key.isEmpty) continue;
+      final type = c.type.trim().isEmpty ? 'CONSTRAINT' : c.type;
+      if (!_matchesProfileRestriction(key, type)) continue;
       out.add(
         _RestrictionTag(
           key: key,
-          type: c.type.trim().isEmpty ? 'CONSTRAINT' : c.type,
+          type: type,
           status: c.status.trim().isEmpty ? 'UNKNOWN' : c.status,
         ),
       );
@@ -403,33 +1024,6 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
         : const Color(0xFF60616A);
   }
 
-  String _ingredientEmoji(String name) {
-    final n = name.toLowerCase();
-    if (n.contains('tomato') || n.contains('помид')) return '🍅';
-    if (n.contains('cheese') || n.contains('сыр')) return '🧀';
-    if (n.contains('green') || n.contains('spinach') || n.contains('салат')) {
-      return '🥬';
-    }
-    if (n.contains('onion') || n.contains('лук')) return '🧅';
-    if (n.contains('chicken') || n.contains('кур')) return '🍗';
-    if (n.contains('fish') || n.contains('рыб')) return '🐟';
-    if (n.contains('egg') || n.contains('яй')) return '🥚';
-    if (n.contains('milk') || n.contains('мол')) return '🥛';
-    if (n.contains('rice') || n.contains('рис')) return '🍚';
-    return '🍽️';
-  }
-
-  Color _ingredientColor(int index) {
-    const colors = [
-      Color(0xFFF9E6E1),
-      Color(0xFFF8F0CC),
-      Color(0xFFE0F3E2),
-      Color(0xFFFBEBDD),
-      Color(0xFFE6EDF9),
-    ];
-    return colors[index % colors.length];
-  }
-
   RecipeDetails _mergeWithSeed(RecipeDetails details) {
     final seed = widget.seed;
     if (seed == null) return details;
@@ -451,596 +1045,6 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
       image: image,
       category: category,
       times: times,
-    );
-  }
-
-  Widget _heroImage(RecipeDetails r) {
-    final fallback = _pickPlaceholder(r.id);
-    if (_isBadImageUrl(r.image)) {
-      return Image.asset(fallback, fit: BoxFit.cover);
-    }
-    return Image.network(
-      r.image!.trim(),
-      fit: BoxFit.cover,
-      errorBuilder: (_, _, _) => Image.asset(fallback, fit: BoxFit.cover),
-    );
-  }
-
-  Widget _topIconButton({
-    required IconData icon,
-    required VoidCallback onTap,
-    Color iconColor = Colors.white,
-  }) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: onTap,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: (_isDarkTheme ? Colors.black : const Color(0xFF1D2432))
-              .withValues(alpha: 0.55),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Icon(icon, color: iconColor, size: 20),
-      ),
-    );
-  }
-
-  Future<void> _toggleLike() async {
-    if (_likeBusy) return;
-    setState(() => _likeBusy = true);
-    final ok = await likes.toggle(widget.recipeId);
-    if (!mounted) return;
-    setState(() => _likeBusy = false);
-    if (ok) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _isRu ? 'Не удалось обновить лайк' : 'Failed to update like',
-        ),
-      ),
-    );
-  }
-
-  Widget _metaItem({
-    required IconData icon,
-    required String text,
-    Color? iconColor,
-  }) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 19, color: iconColor ?? _accentOrange),
-        const SizedBox(width: 7),
-        Text(
-          text,
-          style: TextStyle(
-            fontSize: 15,
-            color: _mutedTextColor,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _ingredientCard(
-    IngredientItem item,
-    int index, {
-    required double width,
-  }) {
-    final name =
-        (item.ingredient.isNotEmpty ? item.ingredient : item.rawText ?? '')
-            .trim();
-    final emoji = _ingredientEmoji(name);
-    final sub = (item.quantityText ?? item.rawText ?? '').trim();
-    return Container(
-      width: width,
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: _cardBackground,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _outlineColor),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: _ingredientColor(index),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            alignment: Alignment.center,
-            child: Text(emoji, style: const TextStyle(fontSize: 28)),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name.isEmpty ? (_isRu ? 'Ингредиент' : 'Ingredient') : name,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    height: 1.15,
-                    color: _colorScheme.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  sub.isNotEmpty ? sub : (_isRu ? '1 шт' : '1 item'),
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: _mutedTextColor,
-                    fontWeight: FontWeight.w500,
-                    height: 1.2,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _stepCard(InstructionStepItem step, int index) {
-    final stepNo = step.position ?? (index + 1);
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: _softCardBackground,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '${_isRu ? 'Шаг' : 'Step'} $stepNo',
-            style: const TextStyle(
-              color: _accentOrange,
-              fontWeight: FontWeight.w800,
-              fontSize: 17,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            step.text.trim().isEmpty
-                ? (_isRu ? 'Описание шага отсутствует' : 'No step description')
-                : step.text,
-            style: TextStyle(
-              fontSize: 15,
-              height: 1.35,
-              fontWeight: FontWeight.w500,
-              color: _colorScheme.onSurface,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDetail(RecipeDetails raw) {
-    final r = _mergeWithSeed(raw);
-    final isLiked = likes.isLiked(widget.recipeId);
-    final ingredients = r.ingredients;
-    final category = _cleanText(r.category);
-    final nutrients = _allNutrients(r);
-    final restrictions = _collectRestrictionTags(r);
-    final prepTime = _formatTimeText(r.times.prepTime);
-    final cookTime = _formatTimeText(r.times.cookTime);
-    final totalTime = _formatTimeText(r.times.totalTime);
-
-    return Scaffold(
-      backgroundColor: _screenBackground,
-      body: SafeArea(
-        child: Stack(
-          children: [
-            SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 120),
-              child: Column(
-                children: [
-                  SizedBox(
-                    height: 520,
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(28),
-                            child: _heroImage(r),
-                          ),
-                        ),
-                        Positioned(
-                          top: 14,
-                          left: 14,
-                          child: _topIconButton(
-                            icon: Icons.arrow_back_ios_new_rounded,
-                            onTap: () => Navigator.of(context).pop(),
-                          ),
-                        ),
-                        Positioned(
-                          top: 14,
-                          right: 14,
-                          child: _topIconButton(
-                            icon: isLiked
-                                ? Icons.favorite_rounded
-                                : Icons.favorite_border_rounded,
-                            iconColor: isLiked
-                                ? const Color(0xFFFF6F7E)
-                                : Colors.white,
-                            onTap: _toggleLike,
-                          ),
-                        ),
-                        Positioned(
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          child: Container(
-                            padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
-                            decoration: BoxDecoration(
-                              color: _sheetBackground,
-                              borderRadius: BorderRadius.circular(30),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(
-                                    alpha: _isDarkTheme ? 0.24 : 0.08,
-                                  ),
-                                  blurRadius: 20,
-                                  offset: const Offset(0, 6),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              children: [
-                                Text(
-                                  r.title,
-                                  textAlign: TextAlign.center,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w800,
-                                    height: 1.04,
-                                    letterSpacing: -0.5,
-                                  ),
-                                ),
-                                const SizedBox(height: 5),
-                                Text(
-                                  category ??
-                                      '${r.ingredients.length} ${_isRu ? 'ингредиентов' : 'ingredients'}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: _mutedTextColor,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 15),
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 11,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: _cardBackground,
-                                    borderRadius: BorderRadius.circular(22),
-                                    border: Border.all(color: _outlineColor),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withValues(
-                                          alpha: _isDarkTheme ? 0.18 : 0.06,
-                                        ),
-                                        blurRadius: 14,
-                                        offset: const Offset(0, 4),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Wrap(
-                                    alignment: WrapAlignment.spaceAround,
-                                    runSpacing: 10,
-                                    spacing: 20,
-                                    children: [
-                                      if (prepTime != null)
-                                        _metaItem(
-                                          icon: Icons.timer_outlined,
-                                          text:
-                                              '${tr(context, 'prep')}: $prepTime',
-                                        ),
-                                      if (cookTime != null)
-                                        _metaItem(
-                                          icon: Icons.soup_kitchen_outlined,
-                                          text:
-                                              '${tr(context, 'cook')}: $cookTime',
-                                        ),
-                                      if (totalTime != null)
-                                        _metaItem(
-                                          icon: Icons.access_time_rounded,
-                                          text:
-                                              '${tr(context, 'total')}: $totalTime',
-                                        ),
-                                      _metaItem(
-                                        icon: Icons.adjust_rounded,
-                                        text: _servesText(r),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      tr(context, 'recipe_nutrients_title'),
-                      style: TextStyle(
-                        fontSize: 30,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.4,
-                        color: _colorScheme.onSurface,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  if (nutrients.isEmpty)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: _cardBackground,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: _outlineColor),
-                      ),
-                      child: Text(
-                        _isRu
-                            ? 'Нутриенты не указаны.'
-                            : 'Nutrients are not set.',
-                        style: TextStyle(
-                          color: _mutedTextColor,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    )
-                  else
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: nutrients
-                          .where((n) => _nutritionLabel(n.nutrient).isNotEmpty)
-                          .map(
-                            (n) => Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: _cardBackground,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: _outlineColor),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    _nutritionIcon(n.nutrient),
-                                    size: 15,
-                                    color: _accentOrange,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  RichText(
-                                    text: TextSpan(
-                                      style: TextStyle(
-                                        color: _colorScheme.onSurface,
-                                        fontSize: 13,
-                                        height: 1.15,
-                                      ),
-                                      children: [
-                                        TextSpan(
-                                          text:
-                                              '${_nutritionLabel(n.nutrient)}: ',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                        TextSpan(
-                                          text: _nutritionValue(n),
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                            color: _mutedTextColor,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
-                          .toList(),
-                    ),
-                  const SizedBox(height: 16),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      tr(context, 'recipe_restrictions_title'),
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.4,
-                        color: _colorScheme.onSurface,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  if (restrictions.isEmpty)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: _cardBackground,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: _outlineColor),
-                      ),
-                      child: Text(
-                        tr(context, 'recipe_restrictions_empty'),
-                        style: TextStyle(
-                          color: _mutedTextColor,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    )
-                  else
-                    Column(
-                      children: restrictions.map((item) {
-                        final fg = _restrictionFg(item.status);
-                        return Container(
-                          width: double.infinity,
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                          decoration: BoxDecoration(
-                            color: _restrictionBg(item.status),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: fg.withValues(alpha: 0.3),
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                trValue(context, item.key),
-                                style: TextStyle(
-                                  color: fg,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 13.5,
-                                  height: 1.15,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '${trValue(context, item.type)} • ${trValue(context, item.status)}',
-                                style: TextStyle(
-                                  color: fg.withValues(alpha: 0.85),
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 12,
-                                  height: 1.15,
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  const SizedBox(height: 16),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      _isRu ? 'Ингредиенты' : 'Ingredients',
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.4,
-                        color: _colorScheme.onSurface,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (ingredients.isEmpty)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: _cardBackground,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: _outlineColor),
-                      ),
-                      child: Text(
-                        _isRu ? 'Нет данных' : 'No data',
-                        style: TextStyle(
-                          color: _mutedTextColor,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    )
-                  else
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        return Column(
-                          children: List.generate(
-                            ingredients.length,
-                            (i) => Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: _ingredientCard(
-                                ingredients[i],
-                                i,
-                                width: constraints.maxWidth,
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  const SizedBox(height: 16),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      _isRu
-                          ? 'Инструкция приготовления'
-                          : 'Cooking instruction',
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.5,
-                        color: _colorScheme.onSurface,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (r.instructionSteps.isEmpty)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: _softCardBackground,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Text(
-                        _isRu
-                            ? 'Шаги приготовления отсутствуют.'
-                            : 'Cooking steps are not available.',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w500,
-                          color: _colorScheme.onSurface,
-                        ),
-                      ),
-                    )
-                  else
-                    ...List.generate(
-                      r.instructionSteps.length,
-                      (i) => _stepCard(r.instructionSteps[i], i),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 

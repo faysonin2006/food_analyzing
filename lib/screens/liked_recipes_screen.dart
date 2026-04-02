@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
 import '../core/tr.dart';
-import '../services/api_service.dart';
-import '../services/likes_service.dart';
+import '../repositories/app_repository.dart';
+import '../features/likes/likes.dart';
 import 'recipe_detail_screen.dart';
 import 'recipe_models.dart';
 
@@ -15,7 +16,7 @@ class LikedRecipesScreen extends StatefulWidget {
 }
 
 class _LikedRecipesScreenState extends State<LikedRecipesScreen> {
-  final ApiService _api = ApiService();
+  final AppRepository _repository = AppRepository.instance;
   final LikesService _likes = LikesService.instance;
   final Map<int, RecipeSummary> _cache = {};
   final List<String> _placeholders = const [
@@ -104,7 +105,7 @@ class _LikedRecipesScreenState extends State<LikedRecipesScreen> {
     if (missingIds.isNotEmpty) {
       final loaded = await Future.wait(
         missingIds.map((id) async {
-          final details = await _api.getRecipeDetails(recipeId: id);
+          final details = await _repository.getRecipeDetails(recipeId: id);
           if (details == null) return _fallbackSummary(id);
           return _summaryFromDetails(details);
         }),
@@ -129,7 +130,7 @@ class _LikedRecipesScreenState extends State<LikedRecipesScreen> {
         content: Text(
           _isRu
               ? 'Не удалось удалить из избранного'
-              : 'Failed to remove from liked recipes',
+              : 'Failed to remove from favorites',
         ),
       ),
     );
@@ -148,40 +149,11 @@ class _LikedRecipesScreenState extends State<LikedRecipesScreen> {
   }
 
   Widget _emptyState(Color accent, Color onSurfaceVariant) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 88,
-              height: 88,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: accent.withValues(alpha: 0.16),
-              ),
-              child: Icon(
-                Icons.favorite_border_rounded,
-                size: 42,
-                color: accent,
-              ),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              tr(context, 'liked_empty_title'),
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              tr(context, 'liked_empty_subtitle'),
-              textAlign: TextAlign.center,
-              style: TextStyle(color: onSurfaceVariant, fontSize: 14),
-            ),
-          ],
-        ),
-      ),
+    return AtelierEmptyState(
+      icon: Icons.favorite_border_rounded,
+      title: tr(context, 'liked_empty_title'),
+      subtitle: tr(context, 'liked_empty_subtitle'),
+      accent: accent,
     );
   }
 
@@ -200,39 +172,74 @@ class _LikedRecipesScreenState extends State<LikedRecipesScreen> {
         );
       },
       child: Container(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: cs.surfaceContainer,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(22),
           border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.5)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(16),
               child: SizedBox(
-                width: 92,
-                height: 92,
+                width: 98,
+                height: 98,
                 child: _recipeImage(recipe.image, recipe.id),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    recipe.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      height: 1.1,
-                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          recipe.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w900,
+                            height: 1.04,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color:
+                              (isLiked
+                                      ? const Color(0xFFFF4F65)
+                                      : cs.surfaceContainerHighest)
+                                  .withValues(alpha: isLiked ? 0.14 : 0.7),
+                          shape: BoxShape.circle,
+                        ),
+                        child: IconButton(
+                          tooltip: _isRu ? 'Убрать лайк' : 'Remove like',
+                          onPressed: isLiked
+                              ? () => _toggleLike(recipe.id)
+                              : null,
+                          icon: Icon(
+                            isLiked
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            size: 18,
+                            color: isLiked
+                                ? const Color(0xFFFF4F65)
+                                : cs.onSurfaceVariant.withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 7),
                   Text(
                     recipe.category?.trim().isNotEmpty == true
                         ? recipe.category!
@@ -245,35 +252,33 @@ class _LikedRecipesScreenState extends State<LikedRecipesScreen> {
                       color: cs.onSurfaceVariant,
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      _metaChip(
-                        cs,
-                        Icons.inventory_2_outlined,
-                        _isRu
+                      AtelierTagChip(
+                        icon: Icons.inventory_2_outlined,
+                        foreground: cs.primary,
+                        label: _isRu
                             ? '${recipe.ingredientsCount} ингредиентов'
                             : '${recipe.ingredientsCount} ingredients',
                       ),
                       if (totalTime.isNotEmpty)
-                        _metaChip(cs, Icons.access_time_rounded, totalTime),
+                        AtelierTagChip(
+                          icon: Icons.access_time_rounded,
+                          foreground: cs.tertiary,
+                          label: totalTime,
+                        ),
+                      if (recipe.calories != null)
+                        AtelierTagChip(
+                          icon: Icons.local_fire_department_rounded,
+                          foreground: cs.secondary,
+                          label: '${recipe.calories!.round()} kcal',
+                        ),
                     ],
                   ),
                 ],
-              ),
-            ),
-            IconButton(
-              tooltip: _isRu ? 'Убрать лайк' : 'Remove like',
-              onPressed: isLiked ? () => _toggleLike(recipe.id) : null,
-              icon: Icon(
-                isLiked
-                    ? Icons.favorite_rounded
-                    : Icons.favorite_border_rounded,
-                color: isLiked
-                    ? const Color(0xFFFF4F65)
-                    : cs.onSurfaceVariant.withValues(alpha: 0.7),
               ),
             ),
           ],
@@ -282,89 +287,37 @@ class _LikedRecipesScreenState extends State<LikedRecipesScreen> {
     );
   }
 
-  Widget _metaChip(ColorScheme cs, IconData icon, String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(9),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: cs.primary),
-          const SizedBox(width: 4),
-          Text(
-            text,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: cs.onSurface.withValues(alpha: 0.85),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-    final screenBg = isDark
-        ? theme.scaffoldBackgroundColor
-        : const Color(0xFFF4D9B1);
-    final panelBg = isDark
-        ? Color.alphaBlend(
-            cs.surfaceContainerHighest.withValues(alpha: 0.55),
-            cs.surface,
-          )
-        : const Color(0xFFF6F6F7);
 
     return Scaffold(
-      backgroundColor: screenBg,
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppTopBar(title: tr(context, 'tab_liked'), actions: const []),
-      body: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
-        child: Container(
-          width: double.infinity,
-          decoration: BoxDecoration(
-            color: panelBg,
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(34),
-              bottom: Radius.circular(34),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: isDark ? 0.24 : 0.06),
-                blurRadius: 22,
-                offset: const Offset(0, 8),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          await _likes.refresh();
+          await _reloadLikedRecipes();
+        },
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
+          children: [
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 32),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (_items.isEmpty)
+              _emptyState(cs.primary, cs.onSurfaceVariant)
+            else
+              ..._items.map(
+                (recipe) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _recipeCard(recipe, cs),
+                ),
               ),
-            ],
-          ),
-          child: RefreshIndicator(
-            onRefresh: () async {
-              await _likes.refresh();
-              await _reloadLikedRecipes();
-            },
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _items.isEmpty
-                ? ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      const SizedBox(height: 120),
-                      _emptyState(cs.primary, cs.onSurfaceVariant),
-                    ],
-                  )
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(14, 16, 14, 120),
-                    itemCount: _items.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 10),
-                    itemBuilder: (_, i) => _recipeCard(_items[i], cs),
-                  ),
-          ),
+          ],
         ),
       ),
     );

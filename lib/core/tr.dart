@@ -4,12 +4,12 @@ import 'app_scope.dart';
 class Tr {
   static const Map<String, Map<String, String>> _v = {
     'ru': {
-      'app_name': 'Food Analyzing',
+      'app_name': 'The Organic Atelier',
       'settings': 'Настройки',
       'theme_dark': 'Темная тема',
       'language': 'Язык',
       'lang_ru': 'Русский',
-      'lang_en': 'English',
+      'lang_en': 'Английский',
       'save': 'Сохранить',
       'cancel': 'Отмена',
       'edit': 'Редактировать',
@@ -19,7 +19,7 @@ class Tr {
       'loading': 'Загрузка...',
       'permission_denied': 'Доступ запрещен',
       'photo_not_selected': 'Фото не выбрано',
-      'target_calories': 'Целевые калории',
+      'target_calories': 'Цель по калориям',
       'bmi_label': 'ИМТ',
       'bmi_state_low': 'Низкий',
       'bmi_state_normal': 'Норма',
@@ -31,7 +31,7 @@ class Tr {
       'tab_recipes': 'Рецепты',
       'tab_liked': 'Избранное',
       'liked_empty_title': 'Пока пусто',
-      'liked_empty_subtitle': 'Здесь будут лайкнутые рецепты.',
+      'liked_empty_subtitle': 'Здесь появятся избранные рецепты.',
 
       'login_title': 'Вход',
       'register_title': 'Регистрация',
@@ -90,6 +90,11 @@ class Tr {
       'analysis_questions_no_matches': 'По вашему запросу ничего не найдено.',
       'analysis_history_title': 'История анализов',
       'analysis_history_empty': 'История пока пустая.',
+      'delete_from_history': 'Удалить из истории',
+      'history_item_deleted': 'Запись удалена из истории.',
+      'history_item_delete_pending':
+          'Запись скрыта. Удаление будет повторено при синхронизации.',
+      'server_error': 'Не удалось выполнить действие на сервере.',
 
       'kcal': 'ккал',
       'grams': 'г',
@@ -135,7 +140,7 @@ class Tr {
       'recipe_load_error': 'Не удалось загрузить рецепт',
     },
     'en': {
-      'app_name': 'Food Analyzing',
+      'app_name': 'The Organic Atelier',
       'settings': 'Settings',
       'theme_dark': 'Dark theme',
       'language': 'Language',
@@ -221,6 +226,11 @@ class Tr {
       'analysis_questions_no_matches': 'No matching questions found.',
       'analysis_history_title': 'Analysis history',
       'analysis_history_empty': 'No analysis history yet.',
+      'delete_from_history': 'Delete from history',
+      'history_item_deleted': 'Item removed from history.',
+      'history_item_delete_pending':
+          'Item hidden for now. Deletion will retry during sync.',
+      'server_error': 'Failed to complete the action on the server.',
 
       'kcal': 'kcal',
       'grams': 'g',

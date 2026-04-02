@@ -1,18 +1,72 @@
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import '../core/atelier_ui.dart';
 import '../core/app_scope.dart';
 import '../core/settings_sheet.dart';
+import '../core/smart_food_suggestions.dart';
+import '../core/smart_suggestion_ml.dart';
+import '../core/smart_suggestion_panel.dart';
 import '../core/tr.dart';
+import '../local/search_history_local_db.dart';
+import '../repositories/app_repository.dart';
 import '../services/api_service.dart';
-import '../services/likes_service.dart';
+import '../features/likes/likes.dart';
+import 'liked_recipes_screen.dart';
 import 'recipe_detail_screen.dart';
 import 'recipe_models.dart';
+part 'recipe_search/recipe_search_ui.dart';
+
+class _RecipePantryRank {
+  final RecipeSummary recipe;
+  final int originalIndex;
+  final int matchingIngredientsCount;
+  final int missingIngredientsCount;
+  final double matchRatio;
+
+  const _RecipePantryRank({
+    required this.recipe,
+    required this.originalIndex,
+    required this.matchingIngredientsCount,
+    required this.missingIngredientsCount,
+    required this.matchRatio,
+  });
+}
+
+const List<String> _recipeSearchQuickKeywordsEn = [
+  'dessert',
+  'breakfast',
+  'chicken',
+  'soup',
+  'salad',
+  'pasta',
+  'rice',
+  'healthy',
+  'high protein',
+  'mexican',
+  'asian',
+  'vegetable',
+];
+
+const List<String> _recipeSearchQuickKeywordsRu = [
+  'десерт',
+  'завтрак',
+  'курица',
+  'суп',
+  'салат',
+  'паста',
+  'рис',
+  'здоровый',
+  'высокое содержание белка',
+  'мексиканский',
+  'азиатский',
+  'овощной',
+];
 
 class RecipeSearchScreen extends StatefulWidget {
-  const RecipeSearchScreen({super.key, this.onOpenProfileTap});
+  const RecipeSearchScreen({super.key, this.onOpenOrganizerTap});
 
-  final VoidCallback? onOpenProfileTap;
+  final VoidCallback? onOpenOrganizerTap;
 
   @override
   State<RecipeSearchScreen> createState() => _RecipeSearchScreenState();
@@ -20,16 +74,66 @@ class RecipeSearchScreen extends StatefulWidget {
 
 class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
   static const int _pageSize = 20;
+  static const int _minIngredientTokenLength = 3;
+  static const int _minIngredientPrefixMatchLength = 5;
+  static const int _maxIngredientPrefixExtraChars = 3;
+  static const List<String> _ingredientCanonicalSuffixes = [
+    'иями',
+    'ями',
+    'ами',
+    'ого',
+    'его',
+    'ому',
+    'ему',
+    'ыми',
+    'ими',
+    'ов',
+    'ев',
+    'ей',
+    'ом',
+    'ем',
+    'ам',
+    'ям',
+    'ах',
+    'ях',
+    'ую',
+    'юю',
+    'ый',
+    'ий',
+    'ой',
+    'ая',
+    'яя',
+    'ое',
+    'ее',
+    'ые',
+    'ие',
+    'ых',
+    'их',
+    'es',
+    's',
+    'ы',
+    'и',
+    'ь',
+  ];
 
-  final api = ApiService();
+  final AppRepository repository = AppRepository.instance;
   final likes = LikesService.instance;
   final titleCtrl = TextEditingController();
+  final _titleFocusNode = FocusNode();
   final keywordCtrl = TextEditingController();
-  final pageCtrl = TextEditingController(text: '1');
   final _scrollController = ScrollController();
   final _resultsTopKey = GlobalKey();
-  Map<String, dynamic>? _profile;
+  List<SearchHistoryEntry> _searchHistory = const [];
+  bool _historyLoading = false;
   String? _lastLocaleCode;
+  bool _dashboardLoading = false;
+  List<Map<String, dynamic>> _recommendedPantryRecipes = const [];
+  bool _pantryNamesReady = false;
+  Future<void>? _pantryNamesLoadFuture;
+  Set<String> _pantryNames = const {};
+  List<SmartSuggestionOption> _searchSuggestions = const [];
+  Timer? _searchSuggestionDebounce;
+  int _activeSuggestionRequestId = 0;
 
   String? diet;
   String? selectedKeyword;
@@ -37,450 +141,11 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
   bool searched = false;
   int currentPage = 1;
   bool hasNextPage = false;
+  int? totalPages;
   List<RecipeSummary> results = [];
   int _activeSearchRequestId = 0;
 
   final diets = ['gluten free', 'ketogenic', 'vegetarian', 'vegan', 'paleo'];
-
-  static const List<String> _keywordCatalogEn = [
-    'dessert',
-    'lunch snacks',
-    'one dish meal',
-    'vegetable',
-    'breakfast',
-    'chicken',
-    'pork',
-    'beverages',
-    'breads',
-    'quick breads',
-    'potato',
-    'sauces',
-    'meat',
-    'chicken breast',
-    'cheese',
-    'yeast breads',
-    'bar cookie',
-    'pie',
-    'drop cookies',
-    'stew',
-    'candy',
-    'spreads',
-    'beans',
-    'savory pies',
-    'poultry',
-    'smoothies',
-    'rice',
-    'curries',
-    'european',
-    'fruit',
-    'lamb',
-    'chowders',
-    'crab',
-    'yam sweet potato',
-    'grains',
-    'cauliflower',
-    'ham',
-    'greens',
-    'asian',
-    'roast beef',
-    'chicken thigh leg',
-    'spaghetti',
-    'scones',
-    'white rice',
-    'apple',
-    'mexican',
-    'gelatin',
-    'healthy',
-    'long grain rice',
-    'peppers',
-    'pineapple',
-    'black beans',
-    'whole chicken',
-    'penne',
-    'clear soup',
-    'tarts',
-    'lentil',
-    'shakes',
-    'high protein',
-    'low protein',
-    'low cholesterol',
-    'very low carbs',
-    'corn',
-    'tilapia',
-    'tuna',
-    'onions',
-    'strawberry',
-    'kid friendly',
-    'soy tofu',
-    'weeknight',
-    'brown rice',
-    'canadian',
-    'stocks',
-    'oranges',
-    'lemon',
-    'halibut',
-    'greek',
-    'chinese',
-    'brunch',
-    'catfish',
-    'veal',
-    'southwestern',
-    'sourdough breads',
-    'vegan',
-    'cajun',
-    'berries',
-    'spinach',
-    'coconut',
-    'lobster',
-    'gumbo',
-    'melons',
-    'thai',
-    'savory',
-    'summer',
-    'spicy',
-    'trout',
-    'easy',
-    'caribbean',
-    'deer',
-    'mussels',
-    'german',
-    'mango',
-    'citrus',
-    'tex mex',
-    'mahi mahi',
-    'bass',
-    'tropical fruits',
-    'spanish',
-    'kosher',
-    'pears',
-    'japanese',
-    'toddler friendly',
-    'creole',
-    'african',
-    'turkey breasts',
-    'manicotti',
-    'squid',
-    'cherries',
-    'moroccan',
-    'orange roughy',
-    'whitefish',
-    'duck',
-    'pheasant',
-    'chicken livers',
-    'wild game',
-    'lime',
-    'high fiber',
-    'vietnamese',
-    'winter',
-    'collard greens',
-    'hungarian',
-    'egg free',
-    'crawfish',
-    'tempeh',
-    'no shell fish',
-    'swedish',
-    'plums',
-    'hawaiian',
-    'nepalese',
-    'meatloaf',
-    'medium grain rice',
-    'dutch',
-    'perch',
-    'scandinavian',
-    'polish',
-    'chard',
-    'rabbit',
-    'quail',
-    'egyptian',
-    'elk',
-    'portuguese',
-    'russian',
-    'octopus',
-    'peanut butter',
-    'szechuan',
-    'new zealand',
-    'ethiopian',
-    'norwegian',
-    'danish',
-    'goose',
-    'ice cream',
-    'indonesian',
-    'lebanese',
-    'chocolate chip cookies',
-    'malaysian',
-    'roast',
-    'native american',
-    'brazilian',
-    'cuban',
-    'czech',
-    'turkish',
-    'costa rican',
-    'polynesian',
-    'palestinian',
-    'icelandic',
-    'mashed potatoes',
-    'macaroni and cheese',
-    'no cook',
-    'nuts',
-    'scottish',
-    'finnish',
-    'belgian',
-    'puerto rican',
-    'nigerian',
-    'kiwifruit',
-    'oatmeal',
-    'dairy free foods',
-    'georgian',
-    'summer dip',
-    'pressure cooker',
-    'meatballs',
-    'filipino',
-    'iraqi',
-    'indian',
-    'bear',
-    'south american',
-    'colombian',
-    'korean',
-    'pakistani',
-    'pot pie',
-    '15 minutes',
-    '30 minutes',
-    '60 minutes',
-    '4 hours',
-  ];
-
-  static const List<String> _keywordCatalogRu = [
-    'десерт',
-    'обед закуски',
-    'одно блюдо',
-    'овощной',
-    'завтрак',
-    'курица',
-    'свинина',
-    'напитки',
-    'хлеб',
-    'быстрый хлеб',
-    'картофель',
-    'соусы',
-    'мясо',
-    'куриная грудка',
-    'сыр',
-    'дрожжевой хлеб',
-    'барное печенье',
-    'пирог',
-    'тушить',
-    'конфеты',
-    'спреды',
-    'бобы',
-    'птица',
-    'смузи',
-    'рис',
-    'карри',
-    'европейский',
-    'фрукты',
-    'ягненок овца',
-    'чаудеры',
-    'краб',
-    'ямс сладкий картофель',
-    'зерна',
-    'цветная капуста',
-    'ветчина',
-    'зелень',
-    'азиатский',
-    'ростбиф',
-    'куриное бедро и ножка',
-    'спагетти',
-    'чизкейк',
-    'булочки',
-    'яблоко',
-    'мексиканский',
-    'желатин',
-    'низкое содержание белка',
-    'здоровый',
-    'длиннозерный рис',
-    'перец',
-    'ананас',
-    'черная фасоль',
-    'целая курица',
-    'пенне',
-    'стейк',
-    'очень низкий уровень углеводов',
-    'заправки для салатов',
-    'замороженные десерты',
-    'прозрачный суп',
-    'тарты',
-    'пикантные пироги',
-    'чечевица',
-    'высокое содержание белка',
-    'кукуруза',
-    'тилапия',
-    'лук',
-    'тунец',
-    'низкий уровень холестерина',
-    'пунш напиток',
-    'желе',
-    'будний вечер',
-    'коричневый рис',
-    'канадский',
-    'апельсины',
-    'лимон',
-    'белый рис',
-    'палтус',
-    'греческий',
-    'китайский',
-    'бранч',
-    'сом',
-    'телятина',
-    'юго-запад сша',
-    'хлеб на закваске',
-    'веган',
-    'каджун',
-    'ягоды',
-    'шпинат',
-    'кокос',
-    'омар',
-    'гамбо',
-    'дыни',
-    'тайский',
-    'пикантный',
-    'лето',
-    'форель',
-    'легкий',
-    'карибский бассейн',
-    'олень',
-    'моллюски',
-    'немецкий',
-    'соя тофу',
-    'манго',
-    'цитрусовые',
-    'техас мексика',
-    'испанский',
-    'кошерный',
-    'груши',
-    'японский',
-    'подходит для малышей',
-    'креольский',
-    'африканский',
-    'грудка индейки',
-    'маникотти',
-    'кальмар',
-    'вишня',
-    'марокканский',
-    'сиг',
-    'утка',
-    'фазан',
-    'куриная печень',
-    'дикая дичь',
-    'лайм',
-    'высокое содержание клетчатки',
-    'вьетнамский',
-    'зима',
-    'листовая капуста',
-    'венгерский',
-    'без яиц',
-    'раки',
-    'темпе',
-    'нет моллюсков',
-    'шведский',
-    'сливы',
-    'гавайский',
-    'непальский',
-    'мясной рулет',
-    'среднезерновой рис',
-    'голландский',
-    'окунь',
-    'скандинавский',
-    'польский',
-    'мангольд',
-    'кролик',
-    'перепел',
-    'египетский',
-    'лось',
-    'португальский',
-    'русский',
-    'тропические фрукты',
-    'осьминог',
-    'арахисовое масло',
-    'сычуань',
-    'новая зеландия',
-    'эфиопский',
-    'норвежский',
-    'датский',
-    'гусь',
-    'мороженое',
-    'индонезийский',
-    'ливанский',
-    'печенье с шоколадной крошкой',
-    'малайзийский',
-    'коренной американец',
-    'бразильский',
-    'кубинский',
-    'чешский',
-    'турецкий',
-    'коста-риканский',
-    'полинезийский',
-    'палестинский',
-    'исландский',
-    'пюре',
-    'макароны и сыр',
-    'без готовки',
-    'орехи',
-    'шотландский',
-    'финский',
-    'бельгийский',
-    'пуэрто-риканский',
-    'нигерийский',
-    'киви',
-    'овсянка',
-    'безмолочные продукты',
-    'грузинский',
-    'летний дип',
-    'скороварка',
-    'фрикадельки',
-    'филиппинский',
-    'иракский',
-    'индийский',
-    'медведь',
-    'южноамериканский',
-    'колумбийский',
-    'корейский',
-    'пакистанский',
-    'горшочный пирог',
-    '15 минут',
-    '30 минут',
-    '60 минут',
-    '4 часа',
-  ];
-
-  static const List<String> _quickKeywordsEn = [
-    'dessert',
-    'breakfast',
-    'chicken',
-    'soup',
-    'salad',
-    'pasta',
-    'rice',
-    'healthy',
-    'high protein',
-    'mexican',
-    'asian',
-    'vegetable',
-  ];
-
-  static const List<String> _quickKeywordsRu = [
-    'десерт',
-    'завтрак',
-    'курица',
-    'суп',
-    'салат',
-    'паста',
-    'рис',
-    'здоровый',
-    'высокое содержание белка',
-    'мексиканский',
-    'азиатский',
-    'овощной',
-  ];
 
   final List<String> _placeholders = const [
     'assets/images/recipe_placeholder1.png',
@@ -491,26 +156,51 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
   ThemeData get _theme => Theme.of(context);
   ColorScheme get _cs => Theme.of(context).colorScheme;
   bool get _isDarkTheme => _theme.brightness == Brightness.dark;
-  Color get _screenBackground =>
-      _isDarkTheme ? _theme.scaffoldBackgroundColor : const Color(0xFFF4D9B1);
-  Color get _panelBackground => _isDarkTheme
-      ? Color.alphaBlend(
-          _cs.surfaceContainerHighest.withValues(alpha: 0.56),
-          _cs.surface,
-        )
-      : const Color(0xFFF6F6F7);
-  List<String> get _activeKeywordCatalog =>
-      _isRu ? _keywordCatalogRu : _keywordCatalogEn;
+  Color get _screenBackground => _theme.scaffoldBackgroundColor;
   List<String> get _activeQuickKeywords =>
-      _isRu ? _quickKeywordsRu : _quickKeywordsEn;
+      _isRu ? _recipeSearchQuickKeywordsRu : _recipeSearchQuickKeywordsEn;
+  String get _langUpper =>
+      AppScope.settingsOf(context).locale.languageCode.trim().toUpperCase();
+
+  String _errorText(Object error, String fallback) {
+    if (error is ApiException) return error.message;
+    final text = error.toString().trim();
+    if (text.isEmpty) return fallback;
+    return text.startsWith('Exception: ') ? text.substring(11) : text;
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<T> _loadWithFallback<T>({
+    required Future<T> future,
+    required T fallback,
+    required List<String> errors,
+    required String fallbackMessage,
+  }) async {
+    try {
+      return await future;
+    } catch (error) {
+      errors.add(_errorText(error, fallbackMessage));
+      return fallback;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    titleCtrl.addListener(_handleTitleInputChanged);
+    _titleFocusNode.addListener(_handleTitleFocusChanged);
     likes.addListener(_onLikesChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _loadProfileSummary();
+      _loadSearchHistory();
+      _loadRecipeHighlights();
+      _ensurePantryNamesLoaded();
       likes.ensureLoaded();
       _searchFromFirstPage();
     });
@@ -534,6 +224,8 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || loading) return;
+        _loadSearchHistory();
+        _loadRecipeHighlights();
         _searchFromFirstPage();
       });
     }
@@ -541,10 +233,13 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
 
   @override
   void dispose() {
+    _searchSuggestionDebounce?.cancel();
+    titleCtrl.removeListener(_handleTitleInputChanged);
+    _titleFocusNode.removeListener(_handleTitleFocusChanged);
     likes.removeListener(_onLikesChanged);
     titleCtrl.dispose();
+    _titleFocusNode.dispose();
     keywordCtrl.dispose();
-    pageCtrl.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -554,8 +249,118 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     setState(() {});
   }
 
+  void _safeSetState(VoidCallback fn) {
+    if (!mounted) return;
+    setState(fn);
+  }
+
   void _dismissKeyboard() {
     FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  void _handleTitleInputChanged() {
+    if (!_titleFocusNode.hasFocus) return;
+    _refreshSearchSuggestions();
+  }
+
+  void _handleTitleFocusChanged() {
+    if (_titleFocusNode.hasFocus) {
+      _refreshSearchSuggestions();
+      return;
+    }
+    if (!mounted || _searchSuggestions.isEmpty) return;
+    setState(() => _searchSuggestions = const []);
+  }
+
+  void _refreshSearchSuggestions() {
+    final query = titleCtrl.text;
+    final candidates = SmartFoodSuggestions.collectRecipeSuggestions(
+      isRu: _isRu,
+      history: _searchHistory,
+      keywords: _activeQuickKeywords,
+    );
+    final local = SmartSuggestionMl.localVisibleSuggestions(
+      candidates: candidates,
+      query: query,
+      limit: 7,
+    );
+    if (!_sameSuggestionList(_searchSuggestions, local) && mounted) {
+      setState(() => _searchSuggestions = local);
+    }
+    _scheduleMlSearchSuggestionRerank(query, candidates);
+  }
+
+  void _scheduleMlSearchSuggestionRerank(
+    String query,
+    List<SmartSuggestionOption> candidates,
+  ) {
+    _searchSuggestionDebounce?.cancel();
+    final trimmedQuery = query.trim();
+    if (trimmedQuery.isEmpty || candidates.isEmpty) {
+      return;
+    }
+
+    final requestId = ++_activeSuggestionRequestId;
+    _searchSuggestionDebounce = Timer(
+      const Duration(milliseconds: 220),
+      () async {
+        final ranked = await SmartSuggestionMl.rerankSuggestions(
+          query: trimmedQuery,
+          candidates: candidates,
+          visibleLimit: 7,
+          ranker:
+              ({
+                required String query,
+                required List<Map<String, dynamic>> candidates,
+                required int limit,
+              }) {
+                return repository.rerankSuggestionCandidateIds(
+                  query: query,
+                  candidates: candidates,
+                  limit: limit,
+                );
+              },
+        );
+
+        if (!mounted ||
+            requestId != _activeSuggestionRequestId ||
+            !_titleFocusNode.hasFocus ||
+            titleCtrl.text.trim() != trimmedQuery) {
+          return;
+        }
+        if (_sameSuggestionList(_searchSuggestions, ranked)) return;
+        setState(() => _searchSuggestions = ranked);
+      },
+    );
+  }
+
+  bool _sameSuggestionList(
+    List<SmartSuggestionOption> left,
+    List<SmartSuggestionOption> right,
+  ) {
+    if (identical(left, right)) return true;
+    if (left.length != right.length) return false;
+    for (var index = 0; index < left.length; index++) {
+      if (left[index].primaryText != right[index].primaryText ||
+          left[index].source != right[index].source) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  Future<void> _applySearchSuggestion(SmartSuggestionOption option) async {
+    _searchSuggestionDebounce?.cancel();
+    _activeSuggestionRequestId++;
+    _safeSetState(() {
+      titleCtrl.text = option.primaryText;
+      titleCtrl.selection = TextSelection.collapsed(
+        offset: titleCtrl.text.length,
+      );
+      _searchSuggestions = const [];
+    });
+    _dismissKeyboard();
+    await _searchFromFirstPage();
   }
 
   void _scrollToResultsTop() {
@@ -581,35 +386,441 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     });
   }
 
-  Future<void> _loadProfileSummary() async {
-    final profile = await api.getProfile();
-    if (!mounted || profile == null) return;
-    setState(() => _profile = profile);
+  Future<void> _loadRecipeHighlights() async {
+    if (_dashboardLoading) return;
+    _safeSetState(() => _dashboardLoading = true);
+    final errors = <String>[];
+    final recommendationsFuture = _loadWithFallback<List<Map<String, dynamic>>>(
+      future: repository.getRecommendedRecipes(
+        size: _pageSize,
+        lang: AppScope.settingsOf(context).locale.languageCode,
+      ),
+      fallback: _recommendedPantryRecipes,
+      errors: errors,
+      fallbackMessage: _isRu
+          ? 'Не удалось загрузить рекомендации из кладовой'
+          : 'Failed to load pantry recommendations',
+    );
+    final recommendedPantryRecipes = await recommendationsFuture;
+
+    if (!mounted) return;
+    setState(() {
+      _recommendedPantryRecipes = recommendedPantryRecipes;
+      _dashboardLoading = false;
+    });
+    if (errors.isNotEmpty) {
+      _showMessage(errors.toSet().join('\n'));
+    }
   }
 
-  String _displayUserName() {
-    final rawName = (_profile?['name'] ?? '').toString().trim();
-    if (rawName.isNotEmpty) return rawName;
-    final email = (_profile?['email'] ?? '').toString().trim();
-    if (email.contains('@')) return email.split('@').first;
-    return _isRu ? 'друг' : 'friend';
+  Future<Set<String>> _ensurePantryNamesLoaded() async {
+    if (_pantryNamesReady) return _pantryNames;
+    final future = _pantryNamesLoadFuture ??= _loadPantryNames();
+    await future;
+    return _pantryNames;
   }
 
-  String? _profileAvatarUrl() {
-    final candidates = <dynamic>[
-      _profile?['avatarUrl'],
-      _profile?['avatar_url'],
-      _profile?['avatar'],
-      _profile?['photoUrl'],
-      _profile?['photo_url'],
-      _profile?['imageUrl'],
-      _profile?['image_url'],
-    ];
-    for (final item in candidates) {
-      final value = item?.toString().trim() ?? '';
-      if (value.isNotEmpty) return value;
+  Future<void> _loadPantryNames() async {
+    try {
+      final pantryItems = await repository.getPantryItems();
+      _pantryNames = pantryItems
+          .map((item) => _normalizeIngredientText(item['name']?.toString()))
+          .where((value) => value.isNotEmpty)
+          .toSet();
+    } catch (_) {
+      _pantryNames = const {};
+    } finally {
+      _pantryNamesReady = true;
+      _pantryNamesLoadFuture = null;
+    }
+  }
+
+  Future<List<RecipeSummary>> _loadPantryRecommendedResults({
+    required String lang,
+  }) async {
+    var recommended = _recommendedPantryRecipes;
+    if (recommended.isEmpty) {
+      recommended = await repository.getRecommendedRecipes(
+        size: _pageSize,
+        lang: lang,
+      );
+      _recommendedPantryRecipes = recommended;
+      if (mounted) {
+        setState(() {});
+      }
+    }
+
+    final recipes = recommended
+        .map(RecipeSummary.fromRecommendation)
+        .where((recipe) => recipe.id > 0 && recipe.title.trim().isNotEmpty)
+        .toList();
+    return _hydrateRecipeSummaries(recipes);
+  }
+
+  bool _recipeNeedsCardHydration(RecipeSummary recipe) {
+    final missingTime =
+        recipe.readyInMinutes == null &&
+        (recipe.totalTime ?? '').trim().isEmpty;
+    final missingNutrition =
+        recipe.calories == null &&
+        recipe.protein == null &&
+        recipe.fat == null &&
+        recipe.carbs == null;
+    return missingTime || missingNutrition;
+  }
+
+  double? _extractNutritionValue(
+    List<NutritionItem> nutritions,
+    List<String> names,
+  ) {
+    final keys = names.map((value) => value.toLowerCase()).toList();
+    for (final nutrition in nutritions) {
+      final nutrient = nutrition.nutrient.toLowerCase();
+      if (keys.any(nutrient.contains)) {
+        return double.tryParse(
+          nutrition.amount
+              .trim()
+              .replaceAll(',', '.')
+              .replaceAll(RegExp(r'[^0-9.\-]'), ''),
+        );
+      }
     }
     return null;
+  }
+
+  RecipeSummary _mergeSummaryWithDetails(
+    RecipeSummary recipe,
+    RecipeDetails details,
+  ) {
+    final mergedTime = (recipe.totalTime ?? '').trim().isNotEmpty
+        ? recipe.totalTime
+        : details.times.totalTime;
+    final mergedReadyMinutes =
+        recipe.readyInMinutes ?? details.times.totalMinutes;
+
+    return recipe.copyWith(
+      image: _cleanText(recipe.image) ?? _cleanText(details.image),
+      category: _cleanText(recipe.category) ?? _cleanText(details.category),
+      totalTime: (mergedTime ?? '').trim().isEmpty ? null : mergedTime,
+      readyInMinutes: mergedReadyMinutes,
+      calories:
+          recipe.calories ??
+          _extractNutritionValue(details.nutritions, [
+            'calories',
+            'calorie',
+            'kcal',
+            'energy',
+            'кал',
+          ]),
+      protein:
+          recipe.protein ??
+          _extractNutritionValue(details.nutritions, ['protein', 'белок']),
+      fat:
+          recipe.fat ??
+          _extractNutritionValue(details.nutritions, ['fat', 'fats', 'жир']),
+      carbs:
+          recipe.carbs ??
+          _extractNutritionValue(details.nutritions, [
+            'carbohydrate',
+            'carb',
+            'carbs',
+            'углевод',
+          ]),
+    );
+  }
+
+  Future<List<RecipeSummary>> _hydrateRecipeSummaries(
+    List<RecipeSummary> recipes,
+  ) async {
+    final targets = <int>[
+      for (var index = 0; index < recipes.length; index++)
+        if (_recipeNeedsCardHydration(recipes[index])) index,
+    ];
+    if (targets.isEmpty) return recipes;
+
+    final hydrated = List<RecipeSummary>.from(recipes);
+    await Future.wait(
+      targets.map((index) async {
+        final seed = recipes[index];
+        final details = await repository.getRecipeDetails(
+          recipeId: seed.id,
+          seedSummary: seed,
+        );
+        if (details == null) return;
+        hydrated[index] = _mergeSummaryWithDetails(seed, details);
+      }),
+    );
+    return hydrated;
+  }
+
+  String _canonicalIngredientToken(String token) {
+    if (token.isEmpty) return token;
+    if (token.endsWith('ies') && token.length > _minIngredientTokenLength + 2) {
+      return '${token.substring(0, token.length - 3)}y';
+    }
+    for (final suffix in _ingredientCanonicalSuffixes) {
+      if (!token.endsWith(suffix)) continue;
+      final trimmed = token.substring(0, token.length - suffix.length);
+      if (trimmed.length >= _minIngredientTokenLength) {
+        return trimmed;
+      }
+    }
+    return token;
+  }
+
+  String _normalizeIngredientText(String? value) {
+    if (value == null) return '';
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^\p{L}\p{Nd}\s]', unicode: true), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  List<String> _ingredientTokens(String value) => value
+      .split(RegExp(r'\s+'))
+      .map((token) => token.trim())
+      .where((token) => token.length >= _minIngredientTokenLength)
+      .toList();
+
+  bool _hasMeaningfulIngredientPhraseOverlap(String left, String right) {
+    if (!left.contains(' ') && !right.contains(' ')) {
+      return false;
+    }
+    final shorterLength = left.length < right.length
+        ? left.length
+        : right.length;
+    if (shorterLength < _minIngredientPrefixMatchLength) {
+      return false;
+    }
+    return left.contains(right) || right.contains(left);
+  }
+
+  bool _hasSafeIngredientPrefixOverlap(String left, String right) {
+    final shorter = left.length <= right.length ? left : right;
+    final longer = identical(shorter, left) ? right : left;
+    if (shorter.length < _minIngredientPrefixMatchLength) {
+      return false;
+    }
+    if (!longer.startsWith(shorter)) {
+      return false;
+    }
+    return longer.length - shorter.length <= _maxIngredientPrefixExtraChars;
+  }
+
+  bool _ingredientTokensPartiallyMatch(String left, String right) {
+    if (left == right) return true;
+
+    final leftCanonical = _canonicalIngredientToken(left);
+    final rightCanonical = _canonicalIngredientToken(right);
+    if (leftCanonical == rightCanonical) {
+      return true;
+    }
+
+    return _hasSafeIngredientPrefixOverlap(left, right) ||
+        _hasSafeIngredientPrefixOverlap(leftCanonical, rightCanonical);
+  }
+
+  bool _ingredientsCompatible(String ingredientName, String pantryName) {
+    if (ingredientName == pantryName) {
+      return true;
+    }
+    if (_hasMeaningfulIngredientPhraseOverlap(ingredientName, pantryName)) {
+      return true;
+    }
+    final ingredientTokens = _ingredientTokens(ingredientName);
+    final pantryTokens = _ingredientTokens(pantryName);
+    for (final ingredientToken in ingredientTokens) {
+      for (final pantryToken in pantryTokens) {
+        if (_ingredientTokensPartiallyMatch(ingredientToken, pantryToken)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool _ingredientInPantry(IngredientItem item) {
+    if (_pantryNames.isEmpty) return false;
+    final candidates = <String>{
+      _normalizeIngredientText(item.ingredient),
+      _normalizeIngredientText(item.note),
+      _normalizeIngredientText(item.rawText),
+      _normalizeIngredientText('${item.ingredient} ${item.note ?? ''}'),
+    }..removeWhere((value) => value.isEmpty);
+
+    for (final candidate in candidates) {
+      for (final pantryName in _pantryNames) {
+        if (_ingredientsCompatible(candidate, pantryName)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  Future<_RecipePantryRank> _pantryRankRecipe(
+    RecipeSummary recipe,
+    int originalIndex,
+  ) async {
+    final details = await repository.getRecipeDetails(
+      recipeId: recipe.id,
+      seedSummary: recipe,
+    );
+    final ingredients = details?.ingredients ?? const <IngredientItem>[];
+    if (ingredients.isEmpty) {
+      return _RecipePantryRank(
+        recipe: recipe,
+        originalIndex: originalIndex,
+        matchingIngredientsCount: 0,
+        missingIngredientsCount: 0,
+        matchRatio: 0,
+      );
+    }
+
+    final matchingCount = ingredients.where(_ingredientInPantry).length;
+    final missingCount = ingredients.length - matchingCount;
+    return _RecipePantryRank(
+      recipe: recipe,
+      originalIndex: originalIndex,
+      matchingIngredientsCount: matchingCount,
+      missingIngredientsCount: missingCount < 0 ? 0 : missingCount,
+      matchRatio: matchingCount / ingredients.length,
+    );
+  }
+
+  Future<List<RecipeSummary>> _rankRecipesByPantry(
+    List<RecipeSummary> recipes,
+  ) async {
+    if (recipes.length < 2) return recipes;
+    await _ensurePantryNamesLoaded();
+    if (_pantryNames.isEmpty) return recipes;
+
+    final ranked = await Future.wait([
+      for (var index = 0; index < recipes.length; index++)
+        _pantryRankRecipe(recipes[index], index),
+    ]);
+
+    ranked.sort((left, right) {
+      final byMatching = right.matchingIngredientsCount.compareTo(
+        left.matchingIngredientsCount,
+      );
+      if (byMatching != 0) return byMatching;
+
+      final byRatio = right.matchRatio.compareTo(left.matchRatio);
+      if (byRatio != 0) return byRatio;
+
+      final byMissing = left.missingIngredientsCount.compareTo(
+        right.missingIngredientsCount,
+      );
+      if (byMissing != 0) return byMissing;
+
+      return left.originalIndex.compareTo(right.originalIndex);
+    });
+
+    return ranked.map((entry) => entry.recipe).toList();
+  }
+
+  String _buildHistoryQueryText({
+    required String title,
+    required String category,
+    String? dietValue,
+  }) {
+    final parts = <String>[
+      if (title.trim().isNotEmpty) title.trim(),
+      if (category.trim().isNotEmpty) _keywordLabel(category.trim()),
+      if ((dietValue ?? '').trim().isNotEmpty) _dietLabel(dietValue!.trim()),
+    ];
+    return parts.join(' • ').trim();
+  }
+
+  String _composeSearchQuery(String title, String keyword) {
+    final parts = <String>[];
+    final normalized = <String>{};
+
+    void addPart(String value) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return;
+      final key = trimmed.toLowerCase();
+      if (!normalized.add(key)) return;
+      parts.add(trimmed);
+    }
+
+    addPart(title);
+    addPart(keyword);
+    return parts.join(' ').trim();
+  }
+
+  Future<void> _loadSearchHistory() async {
+    if (_historyLoading) return;
+    setState(() => _historyLoading = true);
+    final entries = await repository.getSearchHistory(
+      lang: _langUpper,
+      limit: 20,
+    );
+    if (!mounted) return;
+    setState(() {
+      _searchHistory = entries;
+      _historyLoading = false;
+    });
+    if (_titleFocusNode.hasFocus) {
+      _refreshSearchSuggestions();
+    }
+  }
+
+  Future<void> _saveSearchHistoryEntry({
+    required String title,
+    required String category,
+    required String? dietValue,
+  }) async {
+    final queryText = _buildHistoryQueryText(
+      title: title,
+      category: category,
+      dietValue: dietValue,
+    );
+    if (queryText.isEmpty) return;
+
+    await repository.saveSearchHistory(
+      SearchHistoryDraft(
+        queryText: queryText,
+        titleQuery: _cleanText(title),
+        categoryQuery: _cleanText(category),
+        dietQuery: _cleanText(dietValue),
+        lang: _langUpper,
+      ),
+    );
+    if (!mounted) return;
+    await _loadSearchHistory();
+  }
+
+  Future<void> _applySearchHistoryEntry(SearchHistoryEntry entry) async {
+    _dismissKeyboard();
+    setState(() {
+      titleCtrl.text = entry.titleQuery ?? '';
+      selectedKeyword = _cleanText(entry.categoryQuery);
+      keywordCtrl.text = selectedKeyword ?? '';
+      diet = _cleanText(entry.dietQuery);
+      _searchSuggestions = const [];
+    });
+    await _searchFromFirstPage();
+  }
+
+  Future<void> _deleteSearchHistoryEntry(int id) async {
+    await repository.deleteSearchHistoryItem(id);
+    if (!mounted) return;
+    await _loadSearchHistory();
+  }
+
+  Future<void> _clearSearchHistory() async {
+    await repository.clearSearchHistory(lang: _langUpper);
+    if (!mounted) return;
+    setState(() => _searchHistory = const []);
+  }
+
+  void _openLikedRecipes() {
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const LikedRecipesScreen()))
+        .then((_) => likes.refresh());
   }
 
   Future<void> _searchFromFirstPage() => search(page: 1);
@@ -623,6 +834,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     setState(() {
       loading = true;
       searched = true;
+      _searchSuggestions = const [];
       if (requestedPage == 1) {
         results = [];
       }
@@ -633,16 +845,60 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
       final selectedKeywordValue = (selectedKeyword ?? '').trim().isNotEmpty
           ? selectedKeyword!.trim()
           : keywordCtrl.text.trim();
-
-      final pageResult = await api.searchRecipesPage(
-        diet: diet,
-        title: titleCtrl.text.trim(),
-        category: selectedKeywordValue,
-        lang: lang,
-        page: requestedPage,
-        size: _pageSize,
+      final titleQuery = titleCtrl.text.trim();
+      final combinedQuery = _composeSearchQuery(
+        titleQuery,
+        selectedKeywordValue,
       );
-      final list = pageResult.items;
+      final hasDirectTextSearch = combinedQuery.isNotEmpty;
+      final hasSearchCriteria =
+          hasDirectTextSearch || (diet ?? '').trim().isNotEmpty;
+      final shouldShowPantryRecommendations =
+          !hasSearchCriteria && requestedPage == 1;
+
+      List<RecipeSummary> list;
+      bool nextPageAvailable;
+      int? pageCount;
+
+      if (shouldShowPantryRecommendations) {
+        final recommended = await _loadPantryRecommendedResults(lang: lang);
+        if (!mounted || requestId != _activeSearchRequestId) return;
+        if (recommended.isNotEmpty) {
+          list = recommended;
+          nextPageAvailable = false;
+          pageCount = 1;
+        } else {
+          final pageResult = await repository.searchRecipesPage(
+            diet: diet,
+            title: combinedQuery,
+            category: null,
+            lang: lang,
+            page: requestedPage,
+            size: _pageSize,
+          );
+          list = hasDirectTextSearch
+              ? pageResult.items
+              : await _rankRecipesByPantry(pageResult.items);
+          nextPageAvailable = pageResult.hasNext;
+          pageCount = pageResult.totalPages;
+        }
+      } else {
+        final pageResult = await repository.searchRecipesPage(
+          diet: diet,
+          title: combinedQuery,
+          category: null,
+          lang: lang,
+          page: requestedPage,
+          size: _pageSize,
+        );
+        list = hasDirectTextSearch
+            ? pageResult.items
+            : await _rankRecipesByPantry(pageResult.items);
+        nextPageAvailable = pageResult.hasNext;
+        pageCount = pageResult.totalPages;
+      }
+
+      list = await _hydrateRecipeSummaries(list);
 
       if (!mounted || requestId != _activeSearchRequestId) return;
       if (requestedPage > 1 && list.isEmpty) {
@@ -651,7 +907,6 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
           hasNextPage = false;
           currentPage = previousPage;
         });
-        pageCtrl.text = previousPage.toString();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -665,10 +920,17 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
       setState(() {
         loading = false;
         currentPage = requestedPage;
-        hasNextPage = pageResult.hasNext;
+        hasNextPage = nextPageAvailable;
+        totalPages = pageCount;
         results = list;
       });
-      pageCtrl.text = requestedPage.toString();
+      if (requestedPage == 1) {
+        await _saveSearchHistoryEntry(
+          title: titleCtrl.text,
+          category: selectedKeywordValue,
+          dietValue: diet,
+        );
+      }
       if (requestedPage != previousPage) {
         _scrollToResultsTop();
       }
@@ -679,9 +941,9 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
         currentPage = previousPage;
         if (requestedPage == 1) {
           results = [];
+          totalPages = null;
         }
       });
-      pageCtrl.text = currentPage.toString();
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(tr(context, 'search_error'))));
@@ -698,25 +960,52 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     await search(page: currentPage + 1);
   }
 
-  Future<void> _goToTypedPage() async {
-    _dismissKeyboard();
-    if (loading) return;
-    final page = int.tryParse(pageCtrl.text.trim());
-    if (page == null || page < 1) {
-      pageCtrl.text = currentPage.toString();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _isRu
-                ? 'Введите корректный номер страницы'
-                : 'Enter a valid page number',
+  Future<void> _openPageJump() async {
+    final knownMaxPage = totalPages;
+
+    final controller = TextEditingController(text: '$currentPage');
+    final targetPage = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(_isRu ? 'Перейти на страницу' : 'Go to page'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              hintText: _isRu ? 'Введите номер' : 'Enter page number',
+            ),
+            onSubmitted: (_) {
+              final page = int.tryParse(controller.text.trim());
+              Navigator.of(dialogContext).pop(page);
+            },
           ),
-        ),
-      );
-      return;
-    }
-    if (page == currentPage) return;
-    await search(page: page);
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(_isRu ? 'Отмена' : 'Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final page = int.tryParse(controller.text.trim());
+                Navigator.of(dialogContext).pop(page);
+              },
+              child: Text(_isRu ? 'Перейти' : 'Go'),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (targetPage == null) return;
+    final normalizedPage = knownMaxPage != null
+        ? targetPage.clamp(1, knownMaxPage)
+        : (targetPage < 1 ? 1 : targetPage);
+    if (normalizedPage == currentPage || loading) return;
+    await search(page: normalizedPage);
   }
 
   Future<void> _toggleLike(int recipeId) async {
@@ -760,22 +1049,6 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     final isCyrillic = RegExp(r'[А-Яа-я]').hasMatch(v);
     if (isCyrillic) return v;
     return _titleCase(v);
-  }
-
-  List<String> _keywordSuggestions(String query) {
-    final q = query.trim().toLowerCase();
-    final unique = _activeKeywordCatalog.toSet().toList();
-    if (q.isEmpty) return unique.take(30).toList();
-
-    final startsWith = unique
-        .where((k) => k.toLowerCase().startsWith(q))
-        .toList();
-    final contains = unique.where((k) {
-      final lower = k.toLowerCase();
-      return !lower.startsWith(q) && lower.contains(q);
-    }).toList();
-
-    return [...startsWith, ...contains].take(30).toList();
   }
 
   void _applyKeyword(String keyword) {
@@ -869,638 +1142,44 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     return null;
   }
 
-  Widget _recipeImage(
-    String? image,
-    int recipeId, {
-    required double width,
-    required double height,
-    BorderRadius borderRadius = const BorderRadius.all(Radius.circular(18)),
-  }) {
-    final fallback = _pickPlaceholder(recipeId);
-    final bad = _isBadImageUrl(image);
-    return ClipRRect(
-      borderRadius: borderRadius,
-      child: bad
-          ? Image.asset(
-              fallback,
-              width: width,
-              height: height,
-              fit: BoxFit.cover,
-            )
-          : Image.network(
-              image!.trim(),
-              width: width,
-              height: height,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => Image.asset(
-                fallback,
-                width: width,
-                height: height,
-                fit: BoxFit.cover,
-              ),
-            ),
-    );
-  }
-
-  Widget _profileAvatarFallback() {
-    return Container(
-      width: 42,
-      height: 42,
-      decoration: BoxDecoration(
-        color: const Color(0xFFF1A62B).withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      alignment: Alignment.center,
-      child: const Icon(
-        Icons.person_rounded,
-        size: 24,
-        color: Color(0xFFF1A62B),
-      ),
-    );
-  }
-
-  Future<void> _openFiltersSheet() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-      ),
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (sheetContext, setSheetState) {
-            void syncState(VoidCallback fn) {
-              setState(fn);
-              setSheetState(() {});
-            }
-
-            final suggestions = _keywordSuggestions(keywordCtrl.text);
-            final inset = MediaQuery.of(sheetContext).viewInsets.bottom;
-            return Padding(
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + inset),
-              child: SingleChildScrollView(
-                keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            _isRu ? 'Фильтры рецептов' : 'Recipe filters',
-                            style: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => Navigator.pop(sheetContext),
-                          icon: const Icon(Icons.close_rounded),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: keywordCtrl,
-                      onTapOutside: (_) => _dismissKeyboard(),
-                      onChanged: (value) => syncState(() {
-                        final typed = value.trim().toLowerCase();
-                        final selected = (selectedKeyword ?? '')
-                            .trim()
-                            .toLowerCase();
-                        if (typed.isEmpty || typed != selected) {
-                          selectedKeyword = null;
-                        }
-                      }),
-                      decoration: InputDecoration(
-                        labelText: _isRu ? 'Ключевое слово' : 'Keyword',
-                        hintText: _isRu
-                            ? 'Например: курица, паста, суп, десерт'
-                            : 'For example: chicken, pasta, soup, dessert',
-                        prefixIcon: const Icon(Icons.tag_rounded),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    if ((selectedKeyword ?? '').trim().isNotEmpty)
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          InputChip(
-                            label: Text(_keywordLabel(selectedKeyword!.trim())),
-                            selected: true,
-                            onPressed: null,
-                            onDeleted: () => syncState(() {
-                              selectedKeyword = null;
-                              keywordCtrl.clear();
-                            }),
-                          ),
-                        ],
-                      ),
-                    if ((selectedKeyword ?? '').trim().isNotEmpty)
-                      const SizedBox(height: 12),
-                    Text(
-                      _isRu ? 'Быстрые ключевые слова' : 'Quick keywords',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: _cs.onSurface.withValues(alpha: 0.82),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: _activeQuickKeywords
-                          .map(
-                            (k) => FilterChip(
-                              selected: selectedKeyword == k,
-                              label: Text(_keywordLabel(k)),
-                              onSelected: (_) =>
-                                  syncState(() => _applyKeyword(k)),
-                            ),
-                          )
-                          .toList(),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      _isRu ? 'Подсказки' : 'Suggestions',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: _cs.onSurface.withValues(alpha: 0.82),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    if (suggestions.isEmpty)
-                      Text(
-                        _isRu ? 'Ничего не найдено' : 'No keyword suggestions',
-                        style: TextStyle(
-                          color: _cs.onSurfaceVariant.withValues(alpha: 0.86),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      )
-                    else
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: suggestions
-                            .map(
-                              (k) => FilterChip(
-                                selected: selectedKeyword == k,
-                                label: Text(_keywordLabel(k)),
-                                onSelected: (_) =>
-                                    syncState(() => _applyKeyword(k)),
-                              ),
-                            )
-                            .toList(),
-                      ),
-                    const SizedBox(height: 14),
-                    _dropdown(
-                      hint: tr(context, 'diet_filter'),
-                      value: diet,
-                      items: diets,
-                      labelBuilder: _dietLabel,
-                      onChanged: (v) => syncState(() => diet = v),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => syncState(() {
-                              diet = null;
-                              selectedKeyword = null;
-                              keywordCtrl.clear();
-                            }),
-                            child: Text(_isRu ? 'Сбросить' : 'Reset'),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: FilledButton.icon(
-                            onPressed: () {
-                              Navigator.pop(sheetContext);
-                              _searchFromFirstPage();
-                            },
-                            icon: const Icon(Icons.search_rounded),
-                            label: Text(tr(context, 'find')),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildTopBlock() {
-    final cs = _cs;
-    final userName = _displayUserName();
-    final avatarUrl = _profileAvatarUrl();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                _isRu ? 'Привет, $userName' : 'Hello, $userName',
-                style: const TextStyle(
-                  fontSize: 19,
-                  fontWeight: FontWeight.w800,
-                  height: 1,
-                  letterSpacing: -0.7,
-                ),
-              ),
-            ),
-            IconButton(
-              onPressed: () => showAppSettingsSheet(context),
-              icon: const Icon(Icons.settings_rounded),
-              tooltip: tr(context, 'settings'),
-            ),
-            InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: widget.onOpenProfileTap,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: (avatarUrl == null)
-                    ? _profileAvatarFallback()
-                    : Image.network(
-                        avatarUrl,
-                        width: 42,
-                        height: 42,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) =>
-                            _profileAvatarFallback(),
-                      ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: titleCtrl,
-                onTapOutside: (_) => _dismissKeyboard(),
-                textInputAction: TextInputAction.search,
-                onSubmitted: (_) => _searchFromFirstPage(),
-                decoration: InputDecoration(
-                  hintText: _isRu ? 'Поиск рецептов' : 'Search for recipes',
-                  hintStyle: TextStyle(
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.7),
-                    fontSize: 15,
-                  ),
-                  prefixIcon: Icon(
-                    Icons.search_rounded,
-                    color: cs.onSurfaceVariant.withValues(alpha: 0.65),
-                  ),
-                  suffixIcon: IconButton(
-                    onPressed: loading ? null : _searchFromFirstPage,
-                    icon: const Icon(Icons.north_east_rounded),
-                  ),
-                  filled: true,
-                  fillColor: Color.alphaBlend(
-                    cs.surfaceContainerHighest.withValues(
-                      alpha: _isDarkTheme ? 0.34 : 0.75,
-                    ),
-                    cs.surface,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(18),
-                    borderSide: BorderSide.none,
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(18),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            IconButton.filledTonal(
-              onPressed: _openFiltersSheet,
-              icon: const Icon(Icons.tune_rounded),
-              tooltip: _isRu ? 'Фильтры' : 'Filters',
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildRecipeCard(RecipeSummary recipe) {
-    final totalTime = _totalTimeLabel(recipe);
-    final isLiked = likes.isLiked(recipe.id);
-    final ingredientsText = _isRu
-        ? '${recipe.ingredientsCount} ингредиентов'
-        : '${recipe.ingredientsCount} ingredients';
-    final caloriesText = recipe.calories == null
-        ? null
-        : '${recipe.calories!.round()} ${tr(context, 'kcal')}';
-
-    Widget metaChip(IconData icon, String text) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-        decoration: BoxDecoration(
-          color: Color.alphaBlend(
-            _cs.surfaceContainerHighest.withValues(
-              alpha: _isDarkTheme ? 0.52 : 0.8,
-            ),
-            _cs.surface,
-          ),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: _cs.primary),
-            const SizedBox(width: 4),
-            Text(
-              text,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: _cs.onSurface.withValues(alpha: 0.82),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(18),
-      onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) =>
-                RecipeDetailScreen(recipeId: recipe.id, seed: recipe),
-          ),
-        );
-      },
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: _recipeImage(
-                    recipe.image,
-                    recipe.id,
-                    width: double.infinity,
-                    height: double.infinity,
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                ),
-                Positioned(
-                  right: 10,
-                  bottom: 10,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(20),
-                      onTap: () => _toggleLike(recipe.id),
-                      child: Container(
-                        width: 34,
-                        height: 34,
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.32),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        alignment: Alignment.center,
-                        child: Icon(
-                          isLiked
-                              ? Icons.favorite_rounded
-                              : Icons.favorite_border_rounded,
-                          size: 22,
-                          color: isLiked
-                              ? const Color(0xFFFF4F65)
-                              : Colors.white.withValues(alpha: 0.95),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            recipe.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-              height: 1.1,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              metaChip(Icons.inventory_2_outlined, ingredientsText),
-              if (totalTime != null)
-                metaChip(Icons.access_time_rounded, totalTime),
-              if (caloriesText != null)
-                metaChip(Icons.local_fire_department_rounded, caloriesText),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRecommended() {
-    if (loading && results.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 28),
-        child: Center(child: CircularProgressIndicator()),
-      );
-    }
-    if (searched && results.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 20),
-          child: Text(
-            _isRu ? 'Ничего не найдено' : 'Nothing found',
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-              color: _cs.onSurfaceVariant,
-            ),
-          ),
-        ),
-      );
-    }
-
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: results.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        childAspectRatio: 0.50,
-        mainAxisSpacing: 14,
-        crossAxisSpacing: 12,
-      ),
-      itemBuilder: (_, i) => _buildRecipeCard(results[i]),
-    );
-  }
-
-  Widget _buildPaginationControls() {
-    if (!searched || results.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(top: 14),
-      child: Row(
-        children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: (loading || currentPage <= 1) ? null : _goPrevPage,
-              child: Text(_isRu ? 'Назад' : 'Previous'),
-            ),
-          ),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: 74,
-            child: TextField(
-              controller: pageCtrl,
-              onTapOutside: (_) => _dismissKeyboard(),
-              keyboardType: TextInputType.number,
-              textInputAction: TextInputAction.go,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              onSubmitted: (_) => _goToTypedPage(),
-              textAlign: TextAlign.center,
-              decoration: const InputDecoration(isDense: true),
-            ),
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            height: 40,
-            child: FilledButton(
-              onPressed: loading ? null : _goToTypedPage,
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                minimumSize: const Size(0, 40),
-              ),
-              child: Text(_isRu ? 'Перейти' : 'Go'),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: OutlinedButton(
-              onPressed: (loading || !hasNextPage) ? null : _goNextPage,
-              child: Text(_isRu ? 'Вперед' : 'Next'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
+    final showResults = searched || loading || results.isNotEmpty;
+
     return Scaffold(
       backgroundColor: _screenBackground,
       body: GestureDetector(
         onTap: _dismissKeyboard,
         behavior: HitTestBehavior.translucent,
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
-            child: Container(
-              decoration: BoxDecoration(
-                color: _panelBackground,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(34),
-                  bottom: Radius.circular(34),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(
-                      alpha: _isDarkTheme ? 0.24 : 0.07,
-                    ),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
-                  ),
+          child: RefreshIndicator(
+            onRefresh: () async {
+              await _loadRecipeHighlights();
+              await _loadSearchHistory();
+              await likes.refresh();
+              await _searchFromFirstPage();
+            },
+            child: ListView(
+              controller: _scrollController,
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
+              children: [
+                _buildTopBlock(),
+                const SizedBox(height: 24),
+                if (!showResults) ...[
+                  _buildSearchHistorySection(),
+                  const SizedBox(height: 24),
                 ],
-              ),
-              child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(34),
-                  bottom: Radius.circular(34),
-                ),
-                child: RefreshIndicator(
-                  onRefresh: () async {
-                    await _loadProfileSummary();
-                    await likes.refresh();
-                    await _searchFromFirstPage();
-                  },
-                  child: ListView(
-                    controller: _scrollController,
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
-                    padding: const EdgeInsets.fromLTRB(18, 22, 18, 120),
-                    children: [
-                      _buildTopBlock(),
-                      const SizedBox(height: 18),
-                      SizedBox(key: _resultsTopKey, height: 0),
-                      Text(
-                        _isRu ? 'Рекомендуем' : 'Recommended',
-                        style: const TextStyle(
-                          fontSize: 30,
-                          fontWeight: FontWeight.w800,
-                          height: 1.04,
-                          letterSpacing: -0.6,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      _buildRecommended(),
-                      _buildPaginationControls(),
-                    ],
-                  ),
-                ),
-              ),
+                SizedBox(key: _resultsTopKey, height: 0),
+                if (showResults) ...[
+                  _buildRecommended(),
+                  _buildPaginationControls(),
+                ],
+              ],
             ),
           ),
         ),
       ),
-    );
-  }
-
-  Widget _dropdown({
-    required String hint,
-    required String? value,
-    required List<String> items,
-    required String Function(String) labelBuilder,
-    required ValueChanged<String?> onChanged,
-  }) {
-    return DropdownButtonFormField<String?>(
-      initialValue: value,
-      decoration: InputDecoration(labelText: hint),
-      items: [
-        DropdownMenuItem<String?>(value: null, child: Text(tr(context, 'any'))),
-        ...items.map(
-          (e) =>
-              DropdownMenuItem<String?>(value: e, child: Text(labelBuilder(e))),
-        ),
-      ],
-      onChanged: onChanged,
     );
   }
 }
