@@ -2,6 +2,8 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import 'network_monitor.dart';
+
 class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
   const AppTopBar({super.key, required this.title, required this.actions});
 
@@ -9,7 +11,7 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
   final List<Widget> actions;
 
   @override
-  Size get preferredSize => const Size.fromHeight(86);
+  Size get preferredSize => const Size.fromHeight(84);
 
   @override
   Widget build(BuildContext context) {
@@ -17,11 +19,11 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
     final cs = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
     final shellColor = Color.alphaBlend(
-      cs.surfaceContainerHighest.withValues(alpha: isDark ? 0.74 : 0.9),
-      cs.surface,
+      cs.surface.withValues(alpha: isDark ? 0.72 : 0.82),
+      theme.scaffoldBackgroundColor,
     );
     final borderColor = cs.outlineVariant.withValues(
-      alpha: isDark ? 0.65 : 0.55,
+      alpha: isDark ? 0.34 : 0.18,
     );
 
     return Container(
@@ -29,31 +31,103 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
       child: SafeArea(
         bottom: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          padding: const EdgeInsets.fromLTRB(18, 6, 18, 8),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(28),
             child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 7, sigmaY: 7),
+              filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
               child: Container(
-                height: 58,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
+                height: 60,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
                 decoration: BoxDecoration(
                   color: shellColor,
-                  borderRadius: BorderRadius.circular(24),
+                  borderRadius: BorderRadius.circular(28),
                   border: Border.all(color: borderColor),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(
+                        alpha: isDark ? 0.22 : 0.04,
+                      ),
+                      blurRadius: 24,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
                 ),
                 child: Row(
                   children: [
                     Expanded(
-                      child: Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 21,
-                          fontWeight: FontWeight.w800,
-                          color: cs.onSurface.withValues(alpha: 0.92),
-                          height: 1.02,
-                        ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'THE ORGANIC ATELIER',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: cs.primary,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 10,
+                              letterSpacing: 1.1,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleLarge?.copyWith(
+                              color: cs.onSurface,
+                            ),
+                          ),
+                        ],
                       ),
+                    ),
+                    const SizedBox(width: 10),
+                    AnimatedBuilder(
+                      animation: NetworkMonitor.instance,
+                      builder: (context, _) {
+                        if (NetworkMonitor.instance.isOnline) {
+                          return const SizedBox.shrink();
+                        }
+                        return Container(
+                          margin: const EdgeInsets.only(right: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Color.alphaBlend(
+                              cs.error.withValues(alpha: isDark ? 0.24 : 0.12),
+                              cs.surface,
+                            ),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: cs.error.withValues(alpha: 0.38),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.cloud_off_rounded,
+                                size: 14,
+                                color: cs.error,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'OFFLINE',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.4,
+                                  color: cs.error,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
                     ),
                     ...actions,
                   ],
@@ -104,13 +178,18 @@ class AppTopAction extends StatelessWidget {
         style: IconButton.styleFrom(
           fixedSize: const Size(38, 38),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(999),
           ),
           backgroundColor: destructive ? destructiveBg : normalBg,
           foregroundColor: destructive ? cs.error : cs.primary,
+          side: BorderSide(
+            color: (destructive ? cs.error : cs.primary).withValues(
+              alpha: isDark ? 0.18 : 0.12,
+            ),
+          ),
           padding: EdgeInsets.zero,
         ),
-        icon: Icon(icon, size: 20),
+        icon: Icon(icon, size: 19),
       ),
     );
   }

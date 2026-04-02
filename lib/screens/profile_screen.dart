@@ -1,15 +1,46 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
 import '../core/app_scope.dart';
+import '../core/app_theme.dart';
 import '../core/settings_sheet.dart';
 import '../core/tr.dart';
-import '../services/api_service.dart';
+import '../repositories/app_repository.dart';
+part "profile/profile_ui.dart";
+
+class _WeightHistoryEntry {
+  const _WeightHistoryEntry({required this.date, required this.weight});
+
+  final DateTime date;
+  final double weight;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'date': date.toIso8601String(),
+    'weight': weight,
+  };
+
+  factory _WeightHistoryEntry.fromJson(Map<String, dynamic> json) {
+    return _WeightHistoryEntry(
+      date: DateTime.tryParse(json['date']?.toString() ?? '') ?? DateTime.now(),
+      weight: (json['weight'] as num?)?.toDouble() ?? 0,
+    );
+  }
+}
+
+class _WeightDayPoint {
+  const _WeightDayPoint({required this.date, required this.weight});
+
+  final DateTime date;
+  final double? weight;
+}
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key, this.isActive = false});
@@ -22,10 +53,18 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen>
     with AutomaticKeepAliveClientMixin {
-  final apiService = ApiService();
+  static const String _weightHistoryStoragePrefix = 'profile_weight_history_v1';
+  static const String _weightPeriodStorageKey = 'profile_weight_period_days_v1';
+  static const int _weightHistoryChartDays = 7;
+  static const int _weightHistoryRetainDays = 120;
+
+  final AppRepository repository = AppRepository.instance;
   final ImagePicker _picker = ImagePicker();
 
   Map<String, dynamic>? _profile;
+  List<_WeightHistoryEntry> _weightHistory = const [];
+  int _selectedWeightPeriodDays = 7;
+  int? _selectedWeightPointIndex;
   bool _isLoadingProfile = true;
   bool _isFetchingProfile = false;
   File? _profileAvatarFile;
@@ -96,6 +135,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     _dobController = TextEditingController();
     _heightController = TextEditingController();
     _weightController = TextEditingController();
+    _restoreWeightChartPreferences();
     _loadProfile();
   }
 
@@ -153,7 +193,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   String _getCaloriesDisplayText(Map<String, dynamic>? p) {
     final cals = _getTargetCalories(p);
     if (cals == null) return tr(context, 'calculating');
-    return _isRu ? '$cals ккал/день' : '$cals kcal/day';
+    return _isRu ? '$cals ккал' : '$cals kcal';
   }
 
   String _enumLabel(String? raw) => trValue(context, raw);
@@ -185,6 +225,303 @@ class _ProfileScreenState extends State<ProfileScreen>
     final m = date.month.toString().padLeft(2, '0');
     final d = date.day.toString().padLeft(2, '0');
     return '$y-$m-$d';
+  }
+
+  DateTime _dateOnly(DateTime date) =>
+      DateTime(date.year, date.month, date.day);
+
+  String _weightDayKey(DateTime date) => _formatDate(_dateOnly(date));
+
+  String _weightHistoryStorageKey([Map<String, dynamic>? profileSource]) {
+    final source = profileSource ?? _profile;
+    final email = (source?['email'] ?? '').toString().trim().toLowerCase();
+    final suffix = email.isEmpty
+        ? 'default'
+        : email.replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+    return '${_weightHistoryStoragePrefix}_$suffix';
+  }
+
+  List<_WeightHistoryEntry> _normalizeWeightHistory(
+    Iterable<_WeightHistoryEntry> entries,
+  ) {
+    final byDay = <String, _WeightHistoryEntry>{};
+    for (final entry in entries) {
+      if (!entry.weight.isFinite || entry.weight <= 0) continue;
+      byDay[_weightDayKey(entry.date)] = _WeightHistoryEntry(
+        date: _dateOnly(entry.date),
+        weight: entry.weight,
+      );
+    }
+
+    final normalized = byDay.values.toList()
+      ..sort((left, right) => left.date.compareTo(right.date));
+
+    if (normalized.length <= _weightHistoryRetainDays) {
+      return normalized;
+    }
+    return normalized.sublist(
+      normalized.length - _weightHistoryRetainDays,
+      normalized.length,
+    );
+  }
+
+  Future<void> _saveWeightHistoryEntries(
+    List<_WeightHistoryEntry> entries, {
+    Map<String, dynamic>? profileSource,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _weightHistoryStorageKey(profileSource),
+      jsonEncode(entries.map((entry) => entry.toJson()).toList()),
+    );
+  }
+
+  Future<void> _loadWeightHistory({Map<String, dynamic>? profileSource}) async {
+    final source = profileSource ?? _profile;
+    if (source == null) {
+      if (!mounted) return;
+      setState(() => _weightHistory = const []);
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final key = _weightHistoryStorageKey(source);
+    final raw = prefs.getString(key);
+
+    var entries = <_WeightHistoryEntry>[];
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          entries = _normalizeWeightHistory(
+            decoded.whereType<Map>().map(
+              (entry) => _WeightHistoryEntry.fromJson(
+                Map<String, dynamic>.from(entry),
+              ),
+            ),
+          );
+        }
+      } catch (_) {}
+    }
+
+    final profileWeight = _readDouble(source['weight']);
+    if (entries.isEmpty && profileWeight != null && profileWeight > 0) {
+      entries = _normalizeWeightHistory([
+        _WeightHistoryEntry(date: DateTime.now(), weight: profileWeight),
+      ]);
+      await _saveWeightHistoryEntries(entries, profileSource: source);
+    }
+
+    if (!mounted) return;
+    setState(() => _weightHistory = entries);
+  }
+
+  Future<void> _recordWeightHistoryEntry(
+    double weight, {
+    DateTime? date,
+    bool updateProfileWeight = false,
+  }) async {
+    if (!weight.isFinite || weight <= 0) return;
+    final entries = _normalizeWeightHistory([
+      ..._weightHistory,
+      _WeightHistoryEntry(date: date ?? DateTime.now(), weight: weight),
+    ]);
+    if (mounted) {
+      setState(() {
+        _weightHistory = entries;
+        if (updateProfileWeight) {
+          _profile = <String, dynamic>{...?_profile, 'weight': weight};
+        }
+      });
+    }
+    await _saveWeightHistoryEntries(entries);
+  }
+
+  _WeightHistoryEntry? _latestWeightEntry() {
+    if (_weightHistory.isEmpty) return null;
+    return _weightHistory.last;
+  }
+
+  double? _currentWeightValue() =>
+      _latestWeightEntry()?.weight ?? _readDouble(_profile?['weight']);
+
+  List<_WeightDayPoint> _weightSeries({int days = _weightHistoryChartDays}) {
+    final today = _dateOnly(DateTime.now());
+    final byDay = <String, _WeightHistoryEntry>{
+      for (final entry in _weightHistory) _weightDayKey(entry.date): entry,
+    };
+    return [
+      for (var offset = days - 1; offset >= 0; offset--)
+        () {
+          final day = today.subtract(Duration(days: offset));
+          final entry = byDay[_weightDayKey(day)];
+          return _WeightDayPoint(date: day, weight: entry?.weight);
+        }(),
+    ];
+  }
+
+  String _weekdayLabel(DateTime day) {
+    const ru = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+    const en = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    final index = day.weekday - 1;
+    return (_isRu ? ru : en)[index.clamp(0, 6)];
+  }
+
+  String _weightChartLabel(DateTime day, int index, int total) {
+    if (total <= 7) return _weekdayLabel(day);
+
+    final step = total <= 30 ? 5 : 15;
+    final shouldShow =
+        index == 0 ||
+        index == total - 1 ||
+        index == total ~/ 2 ||
+        index % step == 0;
+    if (!shouldShow) return '';
+
+    final dayText = day.day.toString().padLeft(2, '0');
+    final monthText = day.month.toString().padLeft(2, '0');
+    return '$dayText/$monthText';
+  }
+
+  String _weightTooltipDate(DateTime day) {
+    final d = day.day.toString().padLeft(2, '0');
+    final m = day.month.toString().padLeft(2, '0');
+    return '$d/$m';
+  }
+
+  double _chartXForIndex(int index, int count, double width) {
+    if (count <= 1) return width / 2;
+    return width * (index / (count - 1));
+  }
+
+  int _chartIndexForDx(double dx, int count, double width) {
+    if (count <= 1 || width <= 0) return 0;
+    final ratio = (dx / width).clamp(0.0, 1.0);
+    return (ratio * (count - 1)).round().clamp(0, count - 1);
+  }
+
+  Future<void> _restoreWeightChartPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedPeriod = prefs.getInt(_weightPeriodStorageKey);
+    if (savedPeriod != null &&
+        const {7, 30, 90}.contains(savedPeriod) &&
+        mounted) {
+      setState(() => _selectedWeightPeriodDays = savedPeriod);
+    }
+  }
+
+  void _setSelectedWeightPeriodDays(int days) {
+    if (_selectedWeightPeriodDays == days) return;
+    setState(() {
+      _selectedWeightPeriodDays = days;
+      _selectedWeightPointIndex = null;
+    });
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setInt(_weightPeriodStorageKey, days);
+    });
+  }
+
+  void _setSelectedWeightPointIndex(int? index) {
+    setState(() => _selectedWeightPointIndex = index);
+  }
+
+  Future<void> _promptTodayWeightEntry() async {
+    final initialWeight = _currentWeightValue() ?? 70;
+    final controller = TextEditingController(
+      text: initialWeight == initialWeight.roundToDouble()
+          ? initialWeight.toStringAsFixed(0)
+          : initialWeight.toStringAsFixed(1),
+    );
+    var submitting = false;
+
+    final enteredWeight = await showModalBottomSheet<double>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) => AtelierSheetFrame(
+            title: _isRu ? 'Вес на сегодня' : 'Today weight',
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AtelierFieldLabel(_isRu ? 'Вес, кг' : 'Weight, kg'),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: _isRu ? 'Например, 72.4' : 'For example, 72.4',
+                  ),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: submitting
+                        ? null
+                        : () {
+                            final parsed = double.tryParse(
+                              controller.text.trim().replaceAll(',', '.'),
+                            );
+                            if (parsed == null || parsed <= 0) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    _isRu
+                                        ? 'Введи корректный вес'
+                                        : 'Enter a valid weight',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                            setSheetState(() => submitting = true);
+                            Navigator.of(sheetContext).pop(parsed);
+                          },
+                    icon: const Icon(Icons.monitor_weight_rounded),
+                    label: Text(_isRu ? 'Сохранить вес' : 'Save weight'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (enteredWeight == null) return;
+
+    await _recordWeightHistoryEntry(enteredWeight, updateProfileWeight: true);
+
+    var synced = false;
+    try {
+      synced = await repository.updateProfile({'weight': enteredWeight});
+    } catch (_) {
+      synced = false;
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          synced
+              ? (_isRu ? 'Вес сохранён' : 'Weight saved')
+              : (_isRu ? 'Вес сохранён локально' : 'Weight saved locally'),
+        ),
+        backgroundColor: synced ? _cs.secondary : _cs.tertiary,
+      ),
+    );
+
+    if (synced) {
+      await _loadProfile();
+    }
   }
 
   String _dateOfBirthLabel() {
@@ -341,7 +678,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     if (_isFetchingProfile) return;
     _isFetchingProfile = true;
     setState(() => _isLoadingProfile = true);
-    final profile = await apiService.getProfile();
+    final profile = await repository.getProfile();
     if (!mounted) {
       _isFetchingProfile = false;
       return;
@@ -353,6 +690,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       }
       _isLoadingProfile = false;
     });
+    await _loadWeightHistory(profileSource: profile ?? _profile);
     _isFetchingProfile = false;
   }
 
@@ -380,7 +718,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       return null;
     }
 
-    return _picker.pickImage(source: source, imageQuality: 85);
+    return _picker.pickImage(source: source, imageQuality: 100);
   }
 
   Future<void> _pickProfileAvatar(ImageSource source) async {
@@ -389,7 +727,7 @@ class _ProfileScreenState extends State<ProfileScreen>
 
     setState(() => _profileAvatarFile = File(image.path));
 
-    final success = await apiService.uploadAvatar(image);
+    final success = await repository.uploadAvatar(image);
     if (!mounted) return;
 
     if (success) {
@@ -439,9 +777,12 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Future<void> _saveProfile(BuildContext sheetContext) async {
-    Navigator.pop(sheetContext);
-
     try {
+      FocusManager.instance.primaryFocus?.unfocus();
+      final messenger = ScaffoldMessenger.of(context);
+      final profileSavedLabel = tr(context, 'profile_saved');
+      final saveErrorLabel = tr(context, 'save_error');
+
       final profileData = <String, dynamic>{
         if (_heightController.text.isNotEmpty &&
             int.tryParse(_heightController.text) != null)
@@ -460,792 +801,58 @@ class _ProfileScreenState extends State<ProfileScreen>
           'name': _nameController.text.trim(),
       };
 
-      final success = await apiService.updateProfile(profileData);
+      final success = await repository.updateProfile(profileData);
       if (!mounted) return;
 
       if (success) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        final mergedProfile = <String, dynamic>{...?_profile, ...profileData};
+        setState(() {
+          _profile = mergedProfile;
+        });
+        final weight = _readDouble(profileData['weight']);
+        if (weight != null && weight > 0) {
+          await _recordWeightHistoryEntry(weight);
+        }
+        if (sheetContext.mounted) {
+          Navigator.pop(sheetContext);
+        }
+        messenger.showSnackBar(
           SnackBar(
-            content: Text(tr(context, 'profile_saved')),
+            content: Text(profileSavedLabel),
             backgroundColor: _cs.secondary,
           ),
         );
         await _loadProfile();
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(tr(context, 'save_error')),
-            backgroundColor: _cs.error,
-          ),
+        messenger.showSnackBar(
+          SnackBar(content: Text(saveErrorLabel), backgroundColor: _cs.error),
         );
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${tr(context, 'error')}: $e'),
-          backgroundColor: _cs.error,
-        ),
+      final messenger = ScaffoldMessenger.of(context);
+      final errorLabel = tr(context, 'error');
+      messenger.showSnackBar(
+        SnackBar(content: Text('$errorLabel: $e'), backgroundColor: _cs.error),
       );
     }
-  }
-
-  void _showEditProfileDialog() {
-    _nameController.text = _profile?['name']?.toString() ?? '';
-    _dobController.text =
-        _dateOfBirthLabel() == (_isRu ? 'Не указана' : 'Not set')
-        ? ''
-        : _dateOfBirthLabel();
-    _heightController.text = _profile?['height']?.toString() ?? '';
-    _weightController.text = _profile?['weight']?.toString() ?? '';
-
-    _selectedGender = _profile?['gender']?.toString();
-    _selectedActivity = _profile?['activityLevel']?.toString();
-    _selectedGoal = _profile?['goalType']?.toString();
-
-    _selectedDietPrefs = _profileTagSet(
-      _profile?['dietPreferences'] ?? _profile?['diet_preferences'],
-    );
-    _selectedAllergies = _profileTagSet(_profile?['allergies']);
-    _selectedHealthConditions = _profileTagSet(
-      _profile?['healthConditions'] ?? _profile?['health_conditions'],
-    );
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.9,
-        minChildSize: 0.6,
-        maxChildSize: 0.95,
-        builder: (context, scrollController) => StatefulBuilder(
-          builder: (context, setModalState) => Container(
-            padding: EdgeInsets.only(
-              left: 20,
-              right: 20,
-              bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-            ),
-            child: SingleChildScrollView(
-              controller: scrollController,
-              child: Column(
-                children: [
-                  Container(
-                    width: 50,
-                    height: 6,
-                    margin: const EdgeInsets.only(bottom: 20),
-                    decoration: BoxDecoration(
-                      color: _cs.outlineVariant,
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                  ),
-                  Text(
-                    tr(context, 'edit_profile_title'),
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  TextField(
-                    controller: _nameController,
-                    decoration: InputDecoration(
-                      labelText: tr(context, 'name'),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      prefixIcon: Icon(Icons.person, color: _cs.primary),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  TextField(
-                    controller: _dobController,
-                    readOnly: true,
-                    onTap: () => _pickDateOfBirth(context, setModalState),
-                    decoration: InputDecoration(
-                      labelText: tr(context, 'date_of_birth'),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      prefixIcon: Icon(Icons.cake_rounded, color: _cs.primary),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.calendar_month_rounded),
-                        onPressed: () =>
-                            _pickDateOfBirth(context, setModalState),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  _buildDropdownField(
-                    tr(context, 'gender'),
-                    ['MALE', 'FEMALE'],
-                    _selectedGender,
-                    (value) => setModalState(() => _selectedGender = value),
-                  ),
-                  const SizedBox(height: 16),
-
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _heightController,
-                          decoration: InputDecoration(
-                            labelText: tr(context, 'height_cm'),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            prefixIcon: Icon(Icons.height, color: _cs.primary),
-                          ),
-                          keyboardType: TextInputType.number,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: _weightController,
-                          decoration: InputDecoration(
-                            labelText: tr(context, 'weight_kg'),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            prefixIcon: Icon(
-                              Icons.fitness_center,
-                              color: _cs.primary,
-                            ),
-                          ),
-                          keyboardType: TextInputType.number,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  _buildDropdownField(
-                    tr(context, 'activity_level'),
-                    [
-                      'SEDENTARY',
-                      'LIGHTLY_ACTIVE',
-                      'MODERATELY_ACTIVE',
-                      'VERY_ACTIVE',
-                      'EXTRA_ACTIVE',
-                    ],
-                    _selectedActivity,
-                    (value) => setModalState(() => _selectedActivity = value),
-                  ),
-                  const SizedBox(height: 16),
-
-                  _buildDropdownField(
-                    tr(context, 'goal_type'),
-                    ['LOSE_WEIGHT', 'MAINTAIN_WEIGHT', 'GAIN_MUSCLE'],
-                    _selectedGoal,
-                    (value) => setModalState(() => _selectedGoal = value),
-                  ),
-                  const SizedBox(height: 16),
-
-                  _buildMultiSelectCard(
-                    tr(context, 'diet_preferences'),
-                    [
-                      'VEGETARIAN',
-                      'VEGAN',
-                      'PESCATARIAN',
-                      'KETO',
-                      'PALEO',
-                      'HALAL',
-                      'KOSHER',
-                      'GLUTEN_FREE',
-                      'LACTOSE_FREE',
-                      'OMNIVORE',
-                    ],
-                    _selectedDietPrefs,
-                    (item, selected) {
-                      setModalState(() {
-                        if (selected) {
-                          _selectedDietPrefs.add(item);
-                        } else {
-                          _selectedDietPrefs.remove(item);
-                        }
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  _buildMultiSelectCard(
-                    tr(context, 'allergies'),
-                    [
-                      'GLUTEN',
-                      'LACTOSE',
-                      'TREE_NUTS',
-                      'PEANUTS',
-                      'EGGS',
-                      'SOY',
-                      'FISH',
-                      'SHELLFISH',
-                      'MUSTARD',
-                      'SESAME',
-                    ],
-                    _selectedAllergies,
-                    (item, selected) {
-                      setModalState(() {
-                        if (selected) {
-                          _selectedAllergies.add(item);
-                        } else {
-                          _selectedAllergies.remove(item);
-                        }
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  _buildMultiSelectCard(
-                    tr(context, 'health_conditions'),
-                    [
-                      'DIABETES_TYPE_1',
-                      'DIABETES_TYPE_2',
-                      'INSULIN_RESISTANCE',
-                      'GASTRITIS',
-                      'HYPERTENSION',
-                      'HIGH_CHOLESTEROL',
-                      'PREGNANCY',
-                      'GOUT',
-                      'KIDNEY_DISEASE',
-                      'CELIAC_DISEASE',
-                    ],
-                    _selectedHealthConditions,
-                    (item, selected) {
-                      setModalState(() {
-                        if (selected) {
-                          _selectedHealthConditions.add(item);
-                        } else {
-                          _selectedHealthConditions.remove(item);
-                        }
-                      });
-                    },
-                  ),
-
-                  const SizedBox(height: 24),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: Text(tr(context, 'cancel')),
-                        ),
-                      ),
-                      Expanded(
-                        flex: 2,
-                        child: ElevatedButton(
-                          onPressed: () => _saveProfile(context),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _cs.primary,
-                            foregroundColor: _cs.onPrimary,
-                          ),
-                          child: Text(tr(context, 'save')),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDropdownField(
-    String label,
-    List<String> items,
-    String? selected,
-    ValueChanged<String?> onChanged,
-  ) {
-    return DropdownButtonFormField<String>(
-      decoration: InputDecoration(
-        labelText: label,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        prefixIcon: Icon(Icons.arrow_drop_down, color: _cs.primary),
-      ),
-      initialValue: selected,
-      items: items
-          .map(
-            (value) => DropdownMenuItem<String>(
-              value: value,
-              child: Text(_enumLabel(value)),
-            ),
-          )
-          .toList(),
-      onChanged: onChanged,
-    );
-  }
-
-  Widget _buildMultiSelectCard(
-    String title,
-    List<String> items,
-    Set<String> selectedItems,
-    Function(String, bool) onToggle,
-  ) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: items
-                  .map(
-                    (item) => FilterChip(
-                      label: Text(_enumLabel(item)),
-                      selected: selectedItems.contains(item),
-                      onSelected: (selected) => onToggle(item, selected),
-                      selectedColor: _blendWithSurface(
-                        _cs.primary,
-                        _isDarkTheme ? 0.3 : 0.15,
-                      ),
-                      checkmarkColor: _cs.primary,
-                    ),
-                  )
-                  .toList(),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProfileSectionCard({
-    required IconData icon,
-    required String title,
-    required Widget child,
-    required Color accent,
-  }) {
-    final cs = _cs;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _blendWithSurface(
-                      accent,
-                      _isDarkTheme ? 0.34 : 0.14,
-                    ),
-                  ),
-                  child: Icon(icon, color: accent, size: 16),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                      color: cs.onSurface,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            child,
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProfileTagsWrap(
-    List<String> tags, {
-    required String emptyText,
-    required Color accent,
-  }) {
-    final cs = _cs;
-    if (tags.isEmpty) {
-      return Text(
-        emptyText,
-        style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
-      );
-    }
-
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: tags
-          .map(
-            (t) => Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: _blendWithSurface(accent, _isDarkTheme ? 0.26 : 0.1),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: accent.withValues(alpha: 0.35)),
-              ),
-              child: Text(
-                t,
-                style: TextStyle(
-                  color: cs.onSurface,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          )
-          .toList(),
-    );
-  }
-
-  Widget _buildProfileMetricCard({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color accent,
-  }) {
-    final cs = _cs;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: _blendWithSurface(accent, _isDarkTheme ? 0.26 : 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: accent.withValues(alpha: 0.25)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 16, color: accent),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: cs.onSurface,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProfileCard() {
-    final cs = _cs;
-    const accentPrimary = Color(0xFFF1A62B);
-    const accentSecondary = Color(0xFFE69220);
-    const accentMuted = Color(0xFFC7A56A);
-    final height = _readInt(_profile?['height']);
-    final weight = _readDouble(_profile?['weight']);
-    final bmi = _calculateBmi(height, weight);
-
-    final name = (_profile?['name'] ?? tr(context, 'profile_no_name'))
-        .toString()
-        .trim();
-    final email = (_profile?['email'] ?? '').toString().trim();
-    final goal = _enumLabel(_profile?['goalType']?.toString());
-    final activity = _enumLabel(_profile?['activityLevel']?.toString());
-    final gender = _enumLabel(_profile?['gender']?.toString());
-    final dob = _dateOfBirthLabel();
-
-    final avatarUrl = _resolveAvatarUrl();
-    final ImageProvider? avatarImage = _profileAvatarFile != null
-        ? FileImage(_profileAvatarFile!)
-        : (avatarUrl != null && avatarUrl.isNotEmpty
-              ? NetworkImage(avatarUrl)
-              : null);
-
-    final allergies = _profileTags(_profile?['allergies']);
-    final diets = _profileTags(
-      _profile?['dietPreferences'] ?? _profile?['diet_preferences'],
-    );
-    final health = _profileTags(
-      _profile?['healthConditions'] ?? _profile?['health_conditions'],
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Card(
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  _blendWithSurface(accentPrimary, _isDarkTheme ? 0.28 : 0.12),
-                  _blendWithSurface(
-                    accentSecondary,
-                    _isDarkTheme ? 0.22 : 0.07,
-                  ),
-                ],
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Stack(
-                      children: [
-                        CircleAvatar(
-                          radius: 48,
-                          backgroundColor: _blendWithSurface(
-                            accentPrimary,
-                            _isDarkTheme ? 0.34 : 0.16,
-                          ),
-                          backgroundImage: avatarImage,
-                          child: avatarImage == null
-                              ? Icon(
-                                  Icons.person_rounded,
-                                  size: 52,
-                                  color: accentPrimary.withValues(alpha: 0.8),
-                                )
-                              : null,
-                        ),
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: Container(
-                            width: 34,
-                            height: 34,
-                            decoration: BoxDecoration(
-                              color: accentPrimary,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: cs.surface, width: 2),
-                            ),
-                            child: IconButton(
-                              padding: EdgeInsets.zero,
-                              icon: Icon(
-                                Icons.photo_camera_rounded,
-                                color: Colors.white,
-                                size: 15,
-                              ),
-                              onPressed: () =>
-                                  _pickProfileAvatar(ImageSource.gallery),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (_isLoadingProfile)
-                            const LinearProgressIndicator(minHeight: 6)
-                          else ...[
-                            Text(
-                              name,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.w800,
-                                color: cs.onSurface,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              email.isEmpty
-                                  ? (_isRu
-                                        ? 'Почта не указана'
-                                        : 'Email not set')
-                                  : email,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: cs.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _buildProfileMetricCard(
-                      icon: Icons.local_fire_department_rounded,
-                      label: tr(context, 'target_calories'),
-                      value: _getCaloriesDisplayText(_profile),
-                      accent: accentMuted,
-                    ),
-                    _buildProfileMetricCard(
-                      icon: Icons.flag_rounded,
-                      label: tr(context, 'goal_type'),
-                      value: goal,
-                      accent: accentPrimary,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: _showEditProfileDialog,
-                  icon: const Icon(Icons.edit_rounded),
-                  label: Text(tr(context, 'edit_profile')),
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _buildProfileMetricCard(
-                icon: Icons.height_rounded,
-                label: tr(context, 'height_cm'),
-                value: height?.toString() ?? (_isRu ? 'Не указано' : 'Not set'),
-                accent: accentPrimary,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _buildProfileMetricCard(
-                icon: Icons.monitor_weight_rounded,
-                label: tr(context, 'weight_kg'),
-                value:
-                    weight?.toStringAsFixed(1) ??
-                    (_isRu ? 'Не указано' : 'Not set'),
-                accent: accentSecondary,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: _buildProfileMetricCard(
-                icon: Icons.wc_rounded,
-                label: tr(context, 'gender'),
-                value: gender,
-                accent: accentMuted,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _buildProfileMetricCard(
-                icon: Icons.bolt_rounded,
-                label: tr(context, 'activity_level'),
-                value: activity,
-                accent: accentPrimary,
-              ),
-            ),
-          ],
-        ),
-
-        if (bmi != null) ...[
-          const SizedBox(height: 10),
-          _buildProfileMetricCard(
-            icon: Icons.favorite_rounded,
-            label: tr(context, 'bmi_label'),
-            value: '${bmi.toStringAsFixed(1)} · ${_bmiStateLabel(bmi)}',
-            accent: cs.error,
-          ),
-        ],
-
-        const SizedBox(height: 10),
-        _buildProfileMetricCard(
-          icon: Icons.cake_rounded,
-          label: tr(context, 'date_of_birth'),
-          value: dob,
-          accent: accentSecondary,
-        ),
-
-        const SizedBox(height: 12),
-        _buildProfileSectionCard(
-          icon: Icons.eco_rounded,
-          title: tr(context, 'diet_preferences'),
-          accent: accentPrimary,
-          child: _buildProfileTagsWrap(
-            diets,
-            emptyText: _isRu ? 'Не выбрано' : 'Not selected',
-            accent: accentPrimary,
-          ),
-        ),
-        const SizedBox(height: 10),
-        _buildProfileSectionCard(
-          icon: Icons.warning_amber_rounded,
-          title: tr(context, 'allergies'),
-          accent: cs.error,
-          child: _buildProfileTagsWrap(
-            allergies,
-            emptyText: _isRu ? 'Не выбрано' : 'Not selected',
-            accent: cs.error,
-          ),
-        ),
-        const SizedBox(height: 10),
-        _buildProfileSectionCard(
-          icon: Icons.health_and_safety_rounded,
-          title: tr(context, 'health_conditions'),
-          accent: accentMuted,
-          child: _buildProfileTagsWrap(
-            health,
-            emptyText: _isRu ? 'Не выбрано' : 'Not selected',
-            accent: accentMuted,
-          ),
-        ),
-      ],
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final screenBg = _isDarkTheme
-        ? _theme.scaffoldBackgroundColor
-        : const Color(0xFFF4D9B1);
-    final panelBg = _isDarkTheme
-        ? Color.alphaBlend(
-            _cs.surfaceContainerHighest.withValues(alpha: 0.56),
-            _cs.surface,
-          )
-        : const Color(0xFFF6F6F7);
+    final screenBg = _theme.scaffoldBackgroundColor;
 
     return Scaffold(
       backgroundColor: screenBg,
       appBar: AppTopBar(
         title: tr(context, 'tab_profile'),
         actions: [
+          AppTopAction(
+            icon: Icons.refresh_rounded,
+            tooltip: _isRu ? 'Обновить' : 'Refresh',
+            onPressed: _refreshProfile,
+          ),
           AppTopAction(
             icon: Icons.settings_rounded,
             tooltip: tr(context, 'settings'),
@@ -1256,7 +863,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             tooltip: tr(context, 'logout'),
             destructive: true,
             onPressed: () async {
-              await apiService.logout();
+              await repository.logout();
               if (!context.mounted) return;
               Navigator.pushReplacementNamed(context, '/login');
             },
@@ -1265,36 +872,9 @@ class _ProfileScreenState extends State<ProfileScreen>
       ),
       body: RefreshIndicator(
         onRefresh: _refreshProfile,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
-          child: Container(
-            decoration: BoxDecoration(
-              color: panelBg,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(34),
-                bottom: Radius.circular(34),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(
-                    alpha: _isDarkTheme ? 0.24 : 0.06,
-                  ),
-                  blurRadius: 22,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(34),
-                bottom: Radius.circular(34),
-              ),
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
-                child: _buildProfileCard(),
-              ),
-            ),
-          ),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
+          children: [_buildProfileCard()],
         ),
       ),
     );

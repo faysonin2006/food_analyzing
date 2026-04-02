@@ -1,44 +1,63 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  static const Color _seed = Color(0xFFE57F2B);
+  static const Color atelierGreen = Color(0xFF176A21);
+  static const Color atelierMint = Color(0xFFD1FFC8);
+  static const Color atelierLime = Color(0xFFB9F474);
+  static const Color atelierWarmBg = Color(0xFFF4F0E7);
+  static const Color atelierPanel = Color(0xFFE8E2D6);
+  static const Color atelierPanelAlt = Color(0xFFD2CABB);
+  static const Color atelierText = Color(0xFF2E2F2D);
+  static const Color atelierMuted = Color(0xFF4F514B);
+  static const Color atelierHint = Color(0xFF8C8A81);
+  static const Color atelierHoney = Color(0xFFB9893E);
 
   static ThemeData light() {
-    final scheme =
-        ColorScheme.fromSeed(
-          seedColor: _seed,
-          brightness: Brightness.light,
-        ).copyWith(
-          primary: const Color(0xFFC86A1D),
-          onPrimary: Colors.white,
-          secondary: const Color(0xFF1F8A62),
-          onSecondary: Colors.white,
-          tertiary: const Color(0xFF7A5A3E),
-          surface: const Color(0xFFFFFBF7),
-          onSurface: const Color(0xFF211A14),
-          surfaceContainerHighest: const Color(0xFFF4EBDF),
-          outlineVariant: const Color(0xFFD4C8BC),
-        );
+    final scheme = const ColorScheme.light().copyWith(
+      brightness: Brightness.light,
+      primary: atelierGreen,
+      onPrimary: atelierMint,
+      secondary: atelierLime,
+      onSecondary: const Color(0xFF365C00),
+      error: const Color(0xFFB24E33),
+      onError: Colors.white,
+      surface: const Color(0xFFFFFBF5),
+      onSurface: atelierText,
+      tertiary: atelierHoney,
+      onTertiary: Colors.white,
+      surfaceContainerHighest: atelierPanel,
+      outlineVariant: atelierPanelAlt,
+      onSurfaceVariant: atelierMuted,
+      inverseSurface: atelierText,
+      onInverseSurface: atelierWarmBg,
+      shadow: const Color(0x14000000),
+      scrim: const Color(0x66000000),
+    );
 
     return _build(scheme: scheme, isDark: false);
   }
 
   static ThemeData dark() {
-    final scheme =
-        ColorScheme.fromSeed(
-          seedColor: _seed,
-          brightness: Brightness.dark,
-        ).copyWith(
-          primary: const Color(0xFFFFB77A),
-          onPrimary: const Color(0xFF5A2B00),
-          secondary: const Color(0xFF73D6A9),
-          onSecondary: const Color(0xFF003922),
-          tertiary: const Color(0xFFE5C1A3),
-          surface: const Color(0xFF17120E),
-          onSurface: const Color(0xFFF3E5D8),
-          surfaceContainerHighest: const Color(0xFF2B231D),
-          outlineVariant: const Color(0xFF4A3F36),
-        );
+    final scheme = const ColorScheme.dark().copyWith(
+      brightness: Brightness.dark,
+      primary: const Color(0xFF8EE88A),
+      onPrimary: const Color(0xFF0F4316),
+      secondary: const Color(0xFFB9F474),
+      onSecondary: const Color(0xFF2E4200),
+      error: const Color(0xFFFF9A7A),
+      onError: const Color(0xFF4B1100),
+      surface: const Color(0xFF242520),
+      onSurface: const Color(0xFFF2F1EB),
+      tertiary: const Color(0xFFE8B96A),
+      onTertiary: const Color(0xFF4B3100),
+      surfaceContainerHighest: const Color(0xFF2F312B),
+      outlineVariant: const Color(0xFF4B4E46),
+      onSurfaceVariant: const Color(0xFFC8C7BF),
+      inverseSurface: const Color(0xFFF2F1EB),
+      onInverseSurface: const Color(0xFF1C1D18),
+      shadow: Colors.black,
+      scrim: const Color(0x99000000),
+    );
 
     return _build(scheme: scheme, isDark: true);
   }
@@ -47,59 +66,133 @@ class AppTheme {
     final base = ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      scaffoldBackgroundColor: isDark
-          ? const Color(0xFF110D0A)
-          : const Color(0xFFF8F3EC),
-    );
-    final textTheme = base.textTheme.apply(
-      bodyColor: scheme.onSurface,
-      displayColor: scheme.onSurface,
-      fontFamily: 'Avenir',
+      scaffoldBackgroundColor: isDark ? const Color(0xFF171814) : atelierWarmBg,
+      splashFactory: InkSparkle.splashFactory,
     );
 
-    final outline = scheme.outlineVariant.withValues(alpha: isDark ? 0.8 : 0.6);
-    final sectionFill = Color.alphaBlend(
-      scheme.primary.withValues(alpha: isDark ? 0.2 : 0.08),
-      scheme.surface,
+    final textTheme = base.textTheme.copyWith(
+      displayLarge: const TextStyle(
+        fontFamily: 'Manrope',
+        fontSize: 56,
+        fontWeight: FontWeight.w800,
+        height: 1.05,
+        letterSpacing: -2.8,
+      ).copyWith(color: scheme.onSurface),
+      displayMedium: const TextStyle(
+        fontFamily: 'Manrope',
+        fontSize: 42,
+        fontWeight: FontWeight.w800,
+        height: 1.06,
+        letterSpacing: -1.8,
+      ).copyWith(color: scheme.onSurface),
+      headlineLarge: const TextStyle(
+        fontFamily: 'Manrope',
+        fontSize: 34,
+        fontWeight: FontWeight.w800,
+        height: 1.08,
+        letterSpacing: -1.2,
+      ).copyWith(color: scheme.onSurface),
+      headlineMedium: const TextStyle(
+        fontFamily: 'Manrope',
+        fontSize: 28,
+        fontWeight: FontWeight.w800,
+        height: 1.05,
+        letterSpacing: -0.8,
+      ).copyWith(color: scheme.onSurface),
+      headlineSmall: const TextStyle(
+        fontFamily: 'Manrope',
+        fontSize: 22,
+        fontWeight: FontWeight.w800,
+        height: 1.08,
+        letterSpacing: -0.5,
+      ).copyWith(color: scheme.onSurface),
+      titleLarge: const TextStyle(
+        fontFamily: 'Manrope',
+        fontSize: 20,
+        fontWeight: FontWeight.w800,
+        height: 1.15,
+        letterSpacing: -0.3,
+      ).copyWith(color: scheme.onSurface),
+      titleMedium: const TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 16,
+        fontWeight: FontWeight.w700,
+        height: 1.2,
+      ).copyWith(color: scheme.onSurface),
+      bodyLarge: const TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 16,
+        fontWeight: FontWeight.w500,
+        height: 1.45,
+      ).copyWith(color: scheme.onSurface),
+      bodyMedium: const TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
+        height: 1.45,
+      ).copyWith(color: scheme.onSurface),
+      bodySmall: const TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 12,
+        fontWeight: FontWeight.w500,
+        height: 1.35,
+      ).copyWith(color: scheme.onSurfaceVariant),
+      labelLarge: const TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 14,
+        fontWeight: FontWeight.w700,
+        height: 1.2,
+      ).copyWith(color: scheme.onSurface),
+      labelMedium: const TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 10,
+        fontWeight: FontWeight.w700,
+        height: 1.2,
+        letterSpacing: 1.0,
+      ).copyWith(color: scheme.onSurfaceVariant),
+      labelSmall: const TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 10,
+        fontWeight: FontWeight.w700,
+        height: 1.2,
+        letterSpacing: 1.0,
+      ).copyWith(color: scheme.onSurfaceVariant),
     );
+
+    final outline = scheme.outlineVariant.withValues(
+      alpha: isDark ? 0.75 : 0.9,
+    );
+    final cardShadow = [
+      BoxShadow(
+        color: isDark
+            ? Colors.black.withValues(alpha: 0.24)
+            : atelierGreen.withValues(alpha: 0.06),
+        blurRadius: 24,
+        offset: const Offset(0, 12),
+      ),
+    ];
 
     return base.copyWith(
       textTheme: textTheme,
       appBarTheme: AppBarTheme(
         centerTitle: false,
         elevation: 0,
-        scrolledUnderElevation: 0.4,
+        scrolledUnderElevation: 0,
         backgroundColor: Colors.transparent,
         foregroundColor: scheme.onSurface,
-        titleTextStyle: textTheme.titleLarge?.copyWith(
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.2,
-        ),
+        titleTextStyle: textTheme.headlineSmall,
       ),
       cardTheme: CardThemeData(
-        elevation: isDark ? 0 : 1.5,
+        elevation: 0,
         color: scheme.surface,
         margin: EdgeInsets.zero,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(color: outline),
-        ),
+        shadowColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: Color.alphaBlend(
-          scheme.surfaceContainerHighest.withValues(
-            alpha: isDark ? 0.72 : 0.92,
-          ),
-          scheme.surface,
-        ),
-        indicatorColor: sectionFill,
-        labelTextStyle: WidgetStateProperty.resolveWith(
-          (states) => textTheme.labelMedium?.copyWith(
-            fontWeight: states.contains(WidgetState.selected)
-                ? FontWeight.w700
-                : FontWeight.w500,
-          ),
-        ),
+        backgroundColor: Colors.transparent,
+        indicatorColor: scheme.primary.withValues(alpha: 0.12),
+        labelTextStyle: WidgetStatePropertyAll(textTheme.labelMedium),
         iconTheme: WidgetStateProperty.resolveWith(
           (states) => IconThemeData(
             size: 22,
@@ -111,67 +204,111 @@ class AppTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: Color.alphaBlend(
-          scheme.surfaceContainerHighest.withValues(
-            alpha: isDark ? 0.38 : 0.65,
-          ),
-          scheme.surface,
+        fillColor: isDark
+            ? scheme.surfaceContainerHighest.withValues(alpha: 0.86)
+            : atelierPanel,
+        labelStyle: textTheme.labelMedium?.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
+        hintStyle: textTheme.bodyLarge?.copyWith(color: atelierHint),
+        prefixIconColor: atelierHint,
+        suffixIconColor: scheme.primary,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 22,
+          vertical: 18,
         ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(24),
           borderSide: BorderSide(color: outline),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: outline),
+          borderRadius: BorderRadius.circular(24),
+          borderSide: BorderSide(color: outline.withValues(alpha: 0.28)),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: scheme.primary, width: 1.6),
+          borderRadius: BorderRadius.circular(24),
+          borderSide: BorderSide(color: scheme.primary, width: 1.5),
         ),
         errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(24),
           borderSide: BorderSide(color: scheme.error),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(24),
+          borderSide: BorderSide(color: scheme.error, width: 1.5),
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           elevation: 0,
+          shadowColor: Colors.transparent,
           backgroundColor: scheme.primary,
           foregroundColor: scheme.onPrimary,
-          minimumSize: const Size(0, 52),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+          disabledBackgroundColor: scheme.onSurface.withValues(alpha: 0.08),
+          disabledForegroundColor: scheme.onSurfaceVariant.withValues(
+            alpha: 0.55,
           ),
-          textStyle: textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.2,
-          ),
+          minimumSize: const Size(0, 56),
+          shape: const StadiumBorder(),
+          textStyle: textTheme.titleMedium,
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          elevation: 0,
+          backgroundColor: scheme.primary,
+          foregroundColor: scheme.onPrimary,
+          minimumSize: const Size(0, 56),
+          shape: const StadiumBorder(),
+          textStyle: textTheme.titleMedium,
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
+          foregroundColor: scheme.onSurface,
+          side: BorderSide(color: outline.withValues(alpha: 0.28)),
+          minimumSize: const Size(0, 48),
+          shape: const StadiumBorder(),
+          textStyle: textTheme.titleMedium,
+          backgroundColor: isDark
+              ? scheme.surfaceContainerHighest.withValues(alpha: 0.35)
+              : scheme.surface,
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
           foregroundColor: scheme.primary,
-          side: BorderSide(color: outline),
-          minimumSize: const Size(0, 52),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+          textStyle: textTheme.titleMedium,
         ),
       ),
       chipTheme: base.chipTheme.copyWith(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        side: BorderSide(color: outline),
-      ),
-      dropdownMenuTheme: DropdownMenuThemeData(
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: sectionFill,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: BorderSide(color: outline),
+        backgroundColor: isDark
+            ? Color.alphaBlend(
+                scheme.surfaceContainerHighest.withValues(alpha: 0.78),
+                scheme.surface,
+              )
+            : atelierPanel,
+        selectedColor: isDark
+            ? scheme.primary.withValues(alpha: 0.22)
+            : scheme.primary.withValues(alpha: 0.14),
+        disabledColor: isDark
+            ? scheme.surfaceContainerHighest.withValues(alpha: 0.56)
+            : atelierPanelAlt,
+        labelStyle: textTheme.bodyMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+          color: scheme.onSurface,
+        ),
+        secondaryLabelStyle: textTheme.bodyMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+          color: isDark ? scheme.onSurface : scheme.primary,
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+        side: BorderSide(
+          color: (isDark ? scheme.outlineVariant : atelierPanelAlt).withValues(
+            alpha: 0.72,
           ),
         ),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
@@ -179,22 +316,48 @@ class AppTheme {
         contentTextStyle: textTheme.bodyMedium?.copyWith(
           color: scheme.onInverseSurface,
         ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       ),
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: scheme.surface,
+        surfaceTintColor: Colors.transparent,
         showDragHandle: true,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         ),
       ),
       dialogTheme: DialogThemeData(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        backgroundColor: scheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
       ),
       listTileTheme: ListTileThemeData(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       ),
-      dividerTheme: DividerThemeData(color: outline, thickness: 1),
+      dividerTheme: DividerThemeData(color: outline.withValues(alpha: 0.5)),
+      iconTheme: IconThemeData(color: scheme.onSurface),
+      extensions: <ThemeExtension<dynamic>>[
+        _AtelierShadowTheme(shadows: cardShadow),
+      ],
     );
+  }
+}
+
+class _AtelierShadowTheme extends ThemeExtension<_AtelierShadowTheme> {
+  const _AtelierShadowTheme({required this.shadows});
+
+  final List<BoxShadow> shadows;
+
+  @override
+  _AtelierShadowTheme copyWith({List<BoxShadow>? shadows}) {
+    return _AtelierShadowTheme(shadows: shadows ?? this.shadows);
+  }
+
+  @override
+  _AtelierShadowTheme lerp(
+    ThemeExtension<_AtelierShadowTheme>? other,
+    double t,
+  ) {
+    if (other is! _AtelierShadowTheme) return this;
+    return t < 0.5 ? this : other;
   }
 }

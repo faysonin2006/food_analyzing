@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+
+import '../core/app_theme.dart';
+import '../core/atelier_ui.dart';
 import '../core/settings_sheet.dart';
 import '../core/tr.dart';
-import '../services/api_service.dart';
+import '../repositories/app_repository.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -14,8 +17,10 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _apiService = ApiService();
+  final AppRepository _repository = AppRepository.instance;
+
   bool _isLoading = false;
+  bool _obscurePassword = true;
 
   bool get _isRu => Localizations.localeOf(context).languageCode == 'ru';
 
@@ -27,20 +32,81 @@ class _LoginScreenState extends State<LoginScreen> {
     _dismissKeyboard();
     setState(() => _isLoading = true);
 
-    final success = await _apiService.login(
-      _emailController.text,
+    final success = await _repository.login(
+      _emailController.text.trim(),
       _passwordController.text,
     );
 
+    if (!mounted) return;
     setState(() => _isLoading = false);
 
-    if (success && mounted) {
+    if (success) {
       Navigator.pushReplacementNamed(context, '/home');
-    } else if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(tr(context, 'login_error'))));
+      return;
     }
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(tr(context, 'login_error'))));
+  }
+
+  void _showUnavailableProviderMessage(String provider) {
+    final message = _isRu
+        ? '$provider вход пока не подключен'
+        : '$provider sign in is not available yet';
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Widget _settingsButton(BuildContext context) {
+    return IconButton.filledTonal(
+      onPressed: () => showAppSettingsSheet(context),
+      tooltip: tr(context, 'settings'),
+      icon: const Icon(Icons.settings_outlined),
+    );
+  }
+
+  Widget _authLabel(String text) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, bottom: 8),
+      child: Text(
+        text.toUpperCase(),
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.0,
+        ),
+      ),
+    );
+  }
+
+  Widget _socialButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    final theme = Theme.of(context);
+    return Expanded(
+      child: OutlinedButton.icon(
+        onPressed: onTap,
+        icon: Icon(icon, size: 18),
+        label: Text(label),
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 52),
+          backgroundColor: theme.colorScheme.surfaceContainerHigh.withValues(
+            alpha: theme.brightness == Brightness.dark ? 0.55 : 0.7,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(999),
+          ),
+          side: BorderSide(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -52,118 +118,269 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Color.alphaBlend(cs.primary.withValues(alpha: 0.14), cs.surface),
-              cs.surface,
-              Color.alphaBlend(cs.secondary.withValues(alpha: 0.1), cs.surface),
-            ],
+      body: GestureDetector(
+        onTap: _dismissKeyboard,
+        behavior: HitTestBehavior.translucent,
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color.alphaBlend(
+                  cs.tertiary.withValues(alpha: isDark ? 0.16 : 0.12),
+                  theme.scaffoldBackgroundColor,
+                ),
+                theme.scaffoldBackgroundColor,
+                Color.alphaBlend(
+                  AppTheme.atelierLime.withValues(alpha: isDark ? 0.1 : 0.12),
+                  theme.scaffoldBackgroundColor,
+                ),
+              ],
+            ),
           ),
-        ),
-        child: GestureDetector(
-          onTap: _dismissKeyboard,
-          behavior: HitTestBehavior.translucent,
-          child: SafeArea(
-            child: Stack(
-              children: [
-                Center(
+          child: Stack(
+            children: [
+              Positioned(
+                top: -80,
+                left: -30,
+                child: _AmbientOrb(
+                  size: 220,
+                  color: cs.tertiary.withValues(alpha: isDark ? 0.12 : 0.18),
+                ),
+              ),
+              Positioned(
+                right: -40,
+                bottom: 90,
+                child: _AmbientOrb(
+                  size: 240,
+                  color: cs.secondary.withValues(alpha: isDark ? 0.08 : 0.14),
+                ),
+              ),
+              SafeArea(
+                child: Center(
                   child: SingleChildScrollView(
                     keyboardDismissBehavior:
                         ScrollViewKeyboardDismissBehavior.onDrag,
-                    padding: const EdgeInsets.fromLTRB(20, 56, 20, 24),
+                    padding: const EdgeInsets.fromLTRB(24, 72, 24, 24),
                     child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 460),
-                      child: Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                width: 78,
-                                height: 78,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  gradient: LinearGradient(
-                                    colors: [cs.primary, cs.tertiary],
+                      constraints: const BoxConstraints(maxWidth: 440),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Align(
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 42,
+                                  height: 42,
+                                  decoration: BoxDecoration(
+                                    color: cs.primary.withValues(
+                                      alpha: isDark ? 0.22 : 0.14,
+                                    ),
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Icon(
+                                    Icons.spa_rounded,
+                                    color: cs.primary,
                                   ),
                                 ),
-                                child: Icon(
-                                  Icons.restaurant_rounded,
-                                  color: cs.onPrimary,
-                                  size: 38,
-                                ),
-                              ),
-                              const SizedBox(height: 18),
-                              Text(
-                                tr(context, 'login_title'),
-                                style: Theme.of(context).textTheme.headlineSmall
-                                    ?.copyWith(fontWeight: FontWeight.w800),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                _isRu
-                                    ? 'Анализируйте блюда и следите за питанием'
-                                    : 'Analyze meals and track your nutrition',
-                                style: Theme.of(context).textTheme.bodyMedium
-                                    ?.copyWith(color: cs.onSurfaceVariant),
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 24),
-                              TextField(
-                                controller: _emailController,
-                                onTapOutside: (_) => _dismissKeyboard(),
-                                decoration: InputDecoration(
-                                  labelText: tr(context, 'email'),
-                                  prefixIcon: const Icon(
-                                    Icons.alternate_email_rounded,
+                                const SizedBox(width: 12),
+                                Text(
+                                  'The Organic Atelier',
+                                  style: theme.textTheme.titleLarge?.copyWith(
+                                    color: cs.primary,
+                                    fontWeight: FontWeight.w900,
                                   ),
                                 ),
-                                keyboardType: TextInputType.emailAddress,
-                                textInputAction: TextInputAction.next,
-                              ),
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: _passwordController,
-                                onTapOutside: (_) => _dismissKeyboard(),
-                                decoration: InputDecoration(
-                                  labelText: tr(context, 'password'),
-                                  prefixIcon: const Icon(
-                                    Icons.lock_outline_rounded,
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 28),
+                          Text(
+                            _isRu
+                                ? 'С возвращением в ваш\nличный кабинет.'
+                                : 'Welcome back to your\ncurated kitchen.',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.headlineMedium?.copyWith(
+                              height: 0.95,
+                            ),
+                          ),
+                          const SizedBox(height: 28),
+                          AtelierSurfaceCard(
+                            radius: 32,
+                            padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _isRu ? 'ВХОД В АККАУНТ' : 'SIGN IN',
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: cs.primary,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 1.2,
                                   ),
                                 ),
-                                obscureText: true,
-                                textInputAction: TextInputAction.done,
-                                onSubmitted: (_) {
-                                  if (!_isLoading) {
-                                    _login();
-                                  }
-                                },
-                              ),
-                              const SizedBox(height: 18),
-                              _isLoading
-                                  ? const SizedBox(
-                                      height: 52,
-                                      child: Center(
-                                        child: CircularProgressIndicator(),
-                                      ),
-                                    )
-                                  : SizedBox(
-                                      width: double.infinity,
-                                      child: ElevatedButton.icon(
-                                        onPressed: _login,
-                                        icon: const Icon(Icons.login_rounded),
-                                        label: Text(tr(context, 'sign_in')),
+                                const SizedBox(height: 10),
+                                Text(
+                                  _isRu
+                                      ? 'Продолжим с того места,\nгде остановились.'
+                                      : 'Let’s pick up right\nwhere you left off.',
+                                  style: theme.textTheme.headlineSmall
+                                      ?.copyWith(height: 0.98),
+                                ),
+                                const SizedBox(height: 22),
+                                _authLabel(_isRu ? 'Email' : 'Email address'),
+                                TextField(
+                                  controller: _emailController,
+                                  onTapOutside: (_) => _dismissKeyboard(),
+                                  keyboardType: TextInputType.emailAddress,
+                                  textInputAction: TextInputAction.next,
+                                  decoration: const InputDecoration(
+                                    hintText: 'hello@atelier.com',
+                                    prefixIcon: Icon(
+                                      Icons.mail_outline_rounded,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 20),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: _authLabel(
+                                        _isRu ? 'Пароль' : 'Password',
                                       ),
                                     ),
-                              const SizedBox(height: 10),
+                                    TextButton(
+                                      onPressed: null,
+                                      child: Text(
+                                        _isRu ? 'Забыли пароль?' : 'Forgot?',
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                TextField(
+                                  controller: _passwordController,
+                                  onTapOutside: (_) => _dismissKeyboard(),
+                                  obscureText: _obscurePassword,
+                                  textInputAction: TextInputAction.done,
+                                  onSubmitted: (_) {
+                                    if (!_isLoading) _login();
+                                  },
+                                  decoration: InputDecoration(
+                                    hintText: '••••••••',
+                                    suffixIcon: IconButton(
+                                      onPressed: () => setState(
+                                        () => _obscurePassword =
+                                            !_obscurePassword,
+                                      ),
+                                      icon: Icon(
+                                        _obscurePassword
+                                            ? Icons.visibility_outlined
+                                            : Icons.visibility_off_outlined,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 24),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: FilledButton.icon(
+                                    onPressed: _isLoading ? null : _login,
+                                    icon: _isLoading
+                                        ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: AppTheme.atelierMint,
+                                            ),
+                                          )
+                                        : const Icon(
+                                            Icons.arrow_forward_rounded,
+                                          ),
+                                    label: Text(_isRu ? 'Войти' : 'Sign In'),
+                                  ),
+                                ),
+                                const SizedBox(height: 24),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Divider(
+                                        color: cs.outlineVariant.withValues(
+                                          alpha: 0.4,
+                                        ),
+                                      ),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                      ),
+                                      child: Text(
+                                        _isRu
+                                            ? 'ИЛИ ПРОДОЛЖИТЬ ЧЕРЕЗ'
+                                            : 'OR CONNECT WITH',
+                                        style: theme.textTheme.labelSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w800,
+                                              letterSpacing: 1.0,
+                                            ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Divider(
+                                        color: cs.outlineVariant.withValues(
+                                          alpha: 0.4,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 18),
+                                Row(
+                                  children: [
+                                    _socialButton(
+                                      icon: Icons.g_mobiledata_rounded,
+                                      label: 'Google',
+                                      onTap: () =>
+                                          _showUnavailableProviderMessage(
+                                            'Google',
+                                          ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    _socialButton(
+                                      icon: Icons.apple_rounded,
+                                      label: 'Apple',
+                                      onTap: () =>
+                                          _showUnavailableProviderMessage(
+                                            'Apple',
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 28),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                _isRu
+                                    ? 'Впервые в приложении?'
+                                    : 'New to the atelier?',
+                                style: theme.textTheme.bodyLarge?.copyWith(
+                                  color: cs.onSurfaceVariant,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                               TextButton(
                                 onPressed: () {
                                   Navigator.push(
@@ -173,30 +390,50 @@ class _LoginScreenState extends State<LoginScreen> {
                                     ),
                                   );
                                 },
-                                child: Text(tr(context, 'no_account')),
+                                child: Text(
+                                  _isRu ? 'Создать аккаунт' : 'Create Account',
+                                ),
                               ),
                             ],
                           ),
-                        ),
+                        ],
                       ),
                     ),
                   ),
                 ),
-                Positioned(
-                  top: 0,
-                  right: 0,
+              ),
+              SafeArea(
+                child: Align(
+                  alignment: Alignment.topRight,
                   child: Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: IconButton.filledTonal(
-                      onPressed: () => showAppSettingsSheet(context),
-                      tooltip: tr(context, 'settings'),
-                      icon: const Icon(Icons.settings_rounded),
-                    ),
+                    padding: const EdgeInsets.only(top: 8, right: 10),
+                    child: _settingsButton(context),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AmbientOrb extends StatelessWidget {
+  const _AmbientOrb({required this.size, required this.color});
+
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(colors: [color, color.withValues(alpha: 0)]),
         ),
       ),
     );

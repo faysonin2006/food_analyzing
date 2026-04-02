@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'core/network_monitor.dart';
 import 'core/app_scope.dart';
 import 'core/app_settings.dart';
 import 'core/app_theme.dart';
@@ -12,6 +13,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final settings = AppSettings();
   await settings.load();
+  NetworkMonitor.instance.start();
   runApp(MyApp(settings: settings));
 }
 

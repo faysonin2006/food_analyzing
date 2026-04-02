@@ -6,11 +6,14 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
 import '../core/app_scope.dart';
+import '../core/app_theme.dart';
 import '../core/settings_sheet.dart';
 import '../core/tr.dart';
-import '../services/api_service.dart';
+import '../repositories/app_repository.dart';
+part "analyze/analyze_ui.dart";
 
 class AnalyzeScreen extends StatefulWidget {
   const AnalyzeScreen({super.key});
@@ -45,24 +48,29 @@ class _QuestionPreset {
 
 class _AnalyzeScreenState extends State<AnalyzeScreen>
     with AutomaticKeepAliveClientMixin {
-  static const Color _accentOrange = Color(0xFFF1A62B);
-  static const Color _accentOrangeDeep = Color(0xFFD8881E);
+  static const Color _accentOrange = AppTheme.atelierGreen;
+  static const Color _accentOrangeDeep = Color(0xFF0F5418);
 
-  final apiService = ApiService();
+  final AppRepository repository = AppRepository.instance;
   final ImagePicker _picker = ImagePicker();
 
   Map<String, dynamic>? _profile;
   File? _selectedImage;
   bool _isAnalyzing = false;
   Map<String, dynamic>? _analysisResult;
+  String? _savedMealId;
+  bool _isSavingMeal = false;
   bool _isHistoryLoading = false;
   List<Map<String, dynamic>> _analysisHistory = [];
+  Set<String> _deletedHistoryIds = <String>{};
 
   final List<String> _selectedQuestionIds = [];
 
   static const int _maxSelectedQuestions = 5;
   static const int _analysisHistoryLimit = 10;
   static const String _analysisHistoryCachePrefix = 'analysis_history_cache_v1';
+  static const String _analysisHistoryDeletedCachePrefix =
+      'analysis_history_deleted_v1';
   static const List<String> _coreQuestionIds = [
     'calorie_balance',
     'macro_distribution',
@@ -165,8 +173,7 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
   ThemeData get _theme => Theme.of(context);
   ColorScheme get _cs => _theme.colorScheme;
   bool get _isDarkTheme => _theme.brightness == Brightness.dark;
-  Color get _screenBackground =>
-      _isDarkTheme ? _theme.scaffoldBackgroundColor : const Color(0xFFF4D9B1);
+  Color get _screenBackground => _theme.scaffoldBackgroundColor;
   Color get _panelBackground => _isDarkTheme
       ? Color.alphaBlend(
           _cs.surfaceContainerHighest.withValues(alpha: 0.56),
@@ -177,6 +184,7 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
   @override
   void initState() {
     super.initState();
+    _loadDeletedHistoryIds();
     _loadProfile();
     _loadCachedAnalysisHistory();
   }
@@ -234,117 +242,6 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
       return;
     }
     setState(() => _selectedQuestionIds.remove(id));
-  }
-
-  Future<void> _openQuestionsPicker() async {
-    var localQuery = '';
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (sheetContext, setSheetState) {
-            final filtered = _filterQuestionPresets(localQuery);
-            return DraggableScrollableSheet(
-              expand: false,
-              initialChildSize: 0.88,
-              minChildSize: 0.55,
-              maxChildSize: 0.95,
-              builder: (context, scrollController) => Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            tr(context, 'analysis_questions_title'),
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: _blendWithSurface(
-                              _cs.primary,
-                              _isDarkTheme ? 0.3 : 0.12,
-                            ),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            '${_selectedQuestionIds.length}/$_maxSelectedQuestions',
-                            style: TextStyle(
-                              color: _cs.primary,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      onChanged: (value) =>
-                          setSheetState(() => localQuery = value),
-                      decoration: InputDecoration(
-                        hintText: tr(context, 'analysis_questions_search_hint'),
-                        prefixIcon: const Icon(Icons.search_rounded),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child: filtered.isEmpty
-                          ? Center(
-                              child: Text(
-                                tr(context, 'analysis_questions_no_matches'),
-                                style: TextStyle(color: _cs.onSurfaceVariant),
-                              ),
-                            )
-                          : ListView.separated(
-                              controller: scrollController,
-                              itemCount: filtered.length,
-                              separatorBuilder: (_, _) =>
-                                  const SizedBox(height: 4),
-                              itemBuilder: (_, index) {
-                                final item = filtered[index];
-                                final selected = _selectedQuestionIds.contains(
-                                  item.id,
-                                );
-                                return CheckboxListTile(
-                                  value: selected,
-                                  controlAffinity:
-                                      ListTileControlAffinity.leading,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                  ),
-                                  title: Text(item.text(_isRu)),
-                                  onChanged: (value) {
-                                    if (value == null) return;
-                                    _toggleQuestionSelection(item.id, value);
-                                    setSheetState(() {});
-                                  },
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
   }
 
   DateTime? _tryParseDate(dynamic value) {
@@ -409,6 +306,13 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     return raw.isEmpty ? tr(context, 'unknown') : raw;
   }
 
+  String _historyStatusLabelForItem(Map<String, dynamic> item) {
+    if (_analysisLooksLikeNotFood(item)) {
+      return _isRu ? 'Не еда' : 'Not food';
+    }
+    return _historyStatusLabel(_historyStatusRaw(item));
+  }
+
   Color _historyStatusColor(String raw, ColorScheme cs) {
     final upper = raw.toUpperCase();
     if (upper == 'COMPLETED' || upper == 'SUCCESS') return cs.secondary;
@@ -416,14 +320,26 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     return cs.primary;
   }
 
-  String _historyDishName(Map<String, dynamic> item) {
+  String _rawHistoryDishName(Map<String, dynamic> item) {
     return (item['dishName'] ??
                 item['dish_name'] ??
                 item['title'] ??
                 item['name'] ??
                 item['detectedDish'])
-            ?.toString() ??
-        tr(context, 'unknown_dish');
+            ?.toString()
+            .trim() ??
+        '';
+  }
+
+  String _historyDishName(Map<String, dynamic> item) {
+    final raw = _rawHistoryDishName(item);
+    if (raw.isNotEmpty) return raw;
+    if (_analysisLooksLikeNotFood(item)) {
+      return _isRu ? 'Это не еда' : 'This is not food';
+    }
+    final error = _analysisErrorMessage(item);
+    if (error.isNotEmpty) return error;
+    return tr(context, 'unknown_dish');
   }
 
   double? _historyCalories(Map<String, dynamic> item) {
@@ -434,6 +350,94 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
         item['estimated_calories'];
     if (raw is num) return raw.toDouble();
     return double.tryParse(raw?.toString() ?? '');
+  }
+
+  bool? _readBool(dynamic value) {
+    if (value is bool) return value;
+    final text = value?.toString().trim().toLowerCase() ?? '';
+    if (text.isEmpty) return null;
+    if (text == 'true' || text == '1' || text == 'yes') return true;
+    if (text == 'false' || text == '0' || text == 'no') return false;
+    return null;
+  }
+
+  String _analysisIdOf(Map<String, dynamic> item) {
+    return (item['analysisId'] ?? item['analysis_id'] ?? item['id'])
+            ?.toString()
+            .trim() ??
+        '';
+  }
+
+  String? _analysisSavedMealIdOf(Map<String, dynamic> item) {
+    final raw =
+        item['savedMealId'] ??
+        item['saved_meal_id'] ??
+        item['mealEntryId'] ??
+        item['meal_entry_id'];
+    final value = raw?.toString().trim() ?? '';
+    return value.isEmpty ? null : value;
+  }
+
+  String _analysisExtraInfo(Map<String, dynamic> item) {
+    return (item['extraInfo'] ?? item['extra_info'] ?? '').toString().trim();
+  }
+
+  String _analysisErrorMessage(Map<String, dynamic> item) {
+    return (item['errorMessage'] ?? item['error_message'] ?? '')
+        .toString()
+        .trim();
+  }
+
+  int? _analysisHealthScore(Map<String, dynamic> item) {
+    final raw = item['healthScore'] ?? item['health_score'];
+    final value = raw is num
+        ? raw.toInt()
+        : int.tryParse(raw?.toString() ?? '');
+    if (value == null) return null;
+    return value.clamp(0, 100);
+  }
+
+  bool _analysisIsFailed(Map<String, dynamic> item) {
+    final status = _historyStatusRaw(item).toUpperCase();
+    return status == 'FAILED' || status == 'ERROR';
+  }
+
+  bool _analysisLooksLikeNotFood(Map<String, dynamic> item) {
+    final combined = <String>[
+      _rawHistoryDishName(item),
+      _analysisErrorMessage(item),
+      _analysisExtraInfo(item),
+    ].join(' ').toLowerCase();
+    return combined.contains('не еда') ||
+        combined.contains('еда не обнаружена') ||
+        combined.contains('not food') ||
+        combined.contains('food not detected');
+  }
+
+  bool _analysisFoodDetected(Map<String, dynamic> item) {
+    final explicit = _readBool(
+      item['foodDetected'] ??
+          item['food_detected'] ??
+          item['isFood'] ??
+          item['is_food'],
+    );
+    if (explicit != null) return explicit;
+    if (_analysisLooksLikeNotFood(item)) return false;
+    return !_analysisIsFailed(item) && _historyCalories(item) != null;
+  }
+
+  bool _analysisAlreadySaved(Map<String, dynamic> item) {
+    return (_analysisSavedMealIdOf(item)?.isNotEmpty ?? false) ||
+        (_analysisIdOf(item).isNotEmpty &&
+            _analysisIdOf(_analysisResult ?? const {}) == _analysisIdOf(item) &&
+            (_savedMealId?.isNotEmpty ?? false));
+  }
+
+  bool _analysisCanBeSaved(Map<String, dynamic> item) {
+    return _historyStatusRaw(item).toUpperCase() == 'COMPLETED' &&
+        _analysisFoodDetected(item) &&
+        _historyCalories(item) != null &&
+        !_analysisAlreadySaved(item);
   }
 
   String _historyCacheOwner() {
@@ -452,6 +456,9 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
   String _historyCacheKey() =>
       '${_analysisHistoryCachePrefix}_${_historyCacheOwner()}';
 
+  String _deletedHistoryCacheKey() =>
+      '${_analysisHistoryDeletedCachePrefix}_${_historyCacheOwner()}';
+
   String _historyIdentity(Map<String, dynamic> item) {
     final id =
         (item['analysisId'] ?? item['analysis_id'] ?? item['id'])
@@ -460,6 +467,24 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
         '';
     if (id.isNotEmpty) return 'id:$id';
     return 'raw:${jsonEncode(item)}';
+  }
+
+  List<Map<String, dynamic>> _filterDeletedHistoryItems(
+    List<Map<String, dynamic>> items, {
+    Set<String>? deletedIds,
+  }) {
+    final hiddenIds = deletedIds ?? _deletedHistoryIds;
+    if (hiddenIds.isEmpty) {
+      return items.map((item) => Map<String, dynamic>.from(item)).toList();
+    }
+
+    return items
+        .where((item) {
+          final id = _analysisIdOf(item);
+          return id.isEmpty || !hiddenIds.contains(id);
+        })
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
   }
 
   List<Map<String, dynamic>> _mergeHistoryItems(
@@ -494,9 +519,37 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
 
-      final merged = _mergeHistoryItems(cached, _analysisHistory);
+      final merged = _mergeHistoryItems(
+        _filterDeletedHistoryItems(cached),
+        _analysisHistory,
+      );
       if (!mounted) return;
       setState(() => _analysisHistory = merged);
+    } catch (_) {}
+  }
+
+  Future<void> _loadDeletedHistoryIds() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getStringList(_deletedHistoryCacheKey()) ?? const [];
+      final ids = raw
+          .map((value) => value.trim())
+          .where((value) => value.isNotEmpty)
+          .toSet();
+
+      if (!mounted) {
+        _deletedHistoryIds = ids;
+        return;
+      }
+
+      final filteredHistory = _filterDeletedHistoryItems(
+        _analysisHistory,
+        deletedIds: ids,
+      );
+      setState(() {
+        _deletedHistoryIds = ids;
+        _analysisHistory = filteredHistory;
+      });
     } catch (_) {}
   }
 
@@ -505,55 +558,152 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
   ) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_historyCacheKey(), jsonEncode(history));
+      final filtered = _filterDeletedHistoryItems(history);
+      await prefs.setString(_historyCacheKey(), jsonEncode(filtered));
     } catch (_) {}
+  }
+
+  Future<void> _saveDeletedHistoryIds() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+        _deletedHistoryCacheKey(),
+        _deletedHistoryIds.toList()..sort(),
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _rememberDeletedHistoryId(String analysisId) async {
+    final id = analysisId.trim();
+    if (id.isEmpty || _deletedHistoryIds.contains(id)) return;
+
+    if (mounted) {
+      setState(() => _deletedHistoryIds = {..._deletedHistoryIds, id});
+    } else {
+      _deletedHistoryIds = {..._deletedHistoryIds, id};
+    }
+    await _saveDeletedHistoryIds();
+  }
+
+  Future<void> _syncDeletedHistoryIds() async {
+    if (_deletedHistoryIds.isEmpty) return;
+
+    for (final analysisId in _deletedHistoryIds.toList()) {
+      await repository.deleteAnalysisHistoryItem(analysisId);
+    }
   }
 
   Future<void> _upsertHistoryItem(Map<String, dynamic> source) async {
     final item = Map<String, dynamic>.from(source);
     item.putIfAbsent('createdAt', () => DateTime.now().toIso8601String());
+    final analysisId = _analysisIdOf(item);
+    if (analysisId.isNotEmpty && _deletedHistoryIds.contains(analysisId)) {
+      return;
+    }
 
     final merged = _mergeHistoryItems([item], _analysisHistory);
+    final filtered = _filterDeletedHistoryItems(merged);
     if (!mounted) return;
 
-    setState(() => _analysisHistory = merged);
-    await _saveCachedAnalysisHistory(merged);
+    setState(() => _analysisHistory = filtered);
+    await _saveCachedAnalysisHistory(filtered);
+  }
+
+  Future<void> _deleteHistoryItem(Map<String, dynamic> source) async {
+    final analysisId =
+        (source['analysisId'] ?? source['analysis_id'] ?? source['id'])
+            ?.toString()
+            .trim() ??
+        '';
+    final removeKey = _historyIdentity(source);
+    final updated = _analysisHistory
+        .where((item) {
+          if (analysisId.isNotEmpty) {
+            return _analysisIdOf(item) != analysisId;
+          }
+          return _historyIdentity(item) != removeKey;
+        })
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+
+    if (updated.length == _analysisHistory.length && analysisId.isEmpty) return;
+    if (analysisId.isNotEmpty) {
+      await _rememberDeletedHistoryId(analysisId);
+    }
+    if (!mounted) return;
+
+    final isCurrentResult =
+        analysisId.isNotEmpty &&
+        _analysisIdOf(_analysisResult ?? const {}) == analysisId;
+    setState(() {
+      _analysisHistory = updated;
+      if (isCurrentResult) {
+        _analysisResult = null;
+        _savedMealId = null;
+      }
+    });
+    await _saveCachedAnalysisHistory(updated);
+    if (!mounted) return;
+
+    if (analysisId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr(context, 'history_item_deleted'))),
+      );
+      return;
+    }
+
+    final deleted = await repository.deleteAnalysisHistoryItem(analysisId);
+    if (!mounted) return;
+    if (deleted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr(context, 'history_item_deleted'))),
+      );
+      await _loadAnalysisHistory(showLoader: false);
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(tr(context, 'history_item_delete_pending'))),
+    );
   }
 
   Future<void> _loadAnalysisHistory({bool showLoader = true}) async {
     if (showLoader && mounted) {
       setState(() => _isHistoryLoading = true);
     }
-
-    final remote = await apiService.getAnalysisHistory(
+    final remote = await repository.getAnalysisHistory(
       limit: _analysisHistoryLimit,
     );
     if (!mounted) return;
 
     if (remote != null) {
-      final normalized = remote
+      final incoming = remote
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
-      final merged = _mergeHistoryItems(normalized, _analysisHistory);
+      final merged = _mergeHistoryItems(
+        _filterDeletedHistoryItems(incoming),
+        _analysisHistory,
+      );
       setState(() {
         _analysisHistory = merged;
         _isHistoryLoading = false;
       });
       await _saveCachedAnalysisHistory(merged);
+      _syncDeletedHistoryIds();
       return;
     }
 
-    if (mounted) {
-      setState(() => _isHistoryLoading = false);
-    }
+    await _loadCachedAnalysisHistory();
+    if (mounted) setState(() => _isHistoryLoading = false);
   }
 
   Future<void> _loadProfile() async {
-    final profile = await apiService.getProfile();
+    final profile = await repository.getProfile();
     if (!mounted || profile == null) return;
     setState(() => _profile = profile);
-    await _loadCachedAnalysisHistory();
+    await _loadDeletedHistoryIds();
+    await _loadAnalysisHistory(showLoader: false);
   }
 
   Future<void> _refreshAnalyzeScreen() async {
@@ -591,6 +741,7 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     setState(() {
       _selectedImage = File(image.path);
       _analysisResult = null;
+      _savedMealId = null;
     });
   }
 
@@ -602,9 +753,10 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     setState(() {
       _isAnalyzing = true;
       _analysisResult = null;
+      _savedMealId = null;
     });
 
-    final analysisId = await apiService.startFoodAnalysis(
+    final analysisId = await repository.startFoodAnalysis(
       XFile(selectedImagePath),
       extraQuestions: extraQuestions,
     );
@@ -630,25 +782,22 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     while (attempts < maxAttempts) {
       await Future.delayed(const Duration(seconds: 2));
 
-      final result = await apiService.getAnalysisResult(analysisId);
+      final result = await repository.getAnalysisResult(analysisId);
       if (result != null) {
         final status = result['status']?.toString() ?? 'UNKNOWN';
+        final historyItem = Map<String, dynamic>.from(result)
+          ..putIfAbsent('imagePath', () => selectedImagePath)
+          ..putIfAbsent('photo', () => selectedImagePath)
+          ..putIfAbsent('photo_url', () => selectedImagePath)
+          ..putIfAbsent('analysisId', () => analysisId)
+          ..putIfAbsent('status', () => status)
+          ..putIfAbsent('createdAt', () => DateTime.now().toIso8601String());
 
-        if (status == 'COMPLETED' &&
-            result['dish_name'] != null &&
-            result['dish_name'].toString().isNotEmpty &&
-            result['calories'] != null) {
+        if (status == 'COMPLETED' && _analysisFoodDetected(result)) {
           if (!mounted) return;
 
           setState(() => _analysisResult = result);
-          final historyItem = Map<String, dynamic>.from(result)
-            ..putIfAbsent('imagePath', () => selectedImagePath)
-            ..putIfAbsent('photo', () => selectedImagePath)
-            ..putIfAbsent('photo_url', () => selectedImagePath)
-            ..putIfAbsent('analysisId', () => analysisId)
-            ..putIfAbsent('status', () => status)
-            ..putIfAbsent('createdAt', () => DateTime.now().toIso8601String());
-
+          _savedMealId = result['saved_meal_id']?.toString();
           await _upsertHistoryItem(historyItem);
           if (!mounted) return;
 
@@ -666,11 +815,18 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
         }
 
         if (status == 'FAILED') {
+          await _upsertHistoryItem(historyItem);
           if (mounted) {
+            final message = _analysisErrorMessage(result);
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(tr(context, 'analysis_failed'))),
+              SnackBar(
+                content: Text(
+                  message.isEmpty ? tr(context, 'analysis_failed') : message,
+                ),
+              ),
             );
           }
+          await _loadAnalysisHistory(showLoader: false);
           return;
         }
       }
@@ -688,574 +844,226 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     }
   }
 
-  Widget _buildImagePickerCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 220),
-              child: _selectedImage != null
-                  ? ClipRRect(
-                      key: const ValueKey('selected_image'),
-                      borderRadius: BorderRadius.circular(18),
-                      child: Image.file(
-                        _selectedImage!,
-                        width: double.infinity,
-                        height: 220,
-                        fit: BoxFit.cover,
-                      ),
-                    )
-                  : Container(
-                      key: const ValueKey('placeholder'),
-                      width: double.infinity,
-                      height: 220,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(18),
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            _blendWithSurface(_accentOrange, 0.22),
-                            _blendWithSurface(_accentOrangeDeep, 0.14),
-                          ],
-                        ),
-                        border: Border.all(
-                          color: _cs.outlineVariant.withValues(alpha: 0.6),
-                        ),
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.restaurant_menu_rounded,
-                            size: 58,
-                            color: _accentOrangeDeep,
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
-                            tr(context, 'photo_not_selected'),
-                            style: TextStyle(
-                              color: _cs.onSurfaceVariant.withValues(
-                                alpha: 0.85,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.photo_library_rounded),
-                    label: Text(tr(context, 'gallery')),
-                    onPressed: () => _pickAnalysisImage(ImageSource.gallery),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.camera_alt_rounded),
-                    label: Text(tr(context, 'camera')),
-                    onPressed: () => _pickAnalysisImage(ImageSource.camera),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildQuestionsCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              tr(context, 'analysis_questions_core_title'),
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 10),
-            ..._coreQuestionPresets.map((item) {
-              final selected = _selectedQuestionIds.contains(item.id);
-              return CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                value: selected,
-                activeColor: _accentOrange,
-                checkColor: Colors.white,
-                title: Text(item.text(_isRu)),
-                onChanged: (v) {
-                  if (v == null) return;
-                  _toggleQuestionSelection(item.id, v);
-                },
-              );
-            }),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _selectedQuestionIds
-                  .map(
-                    (id) => Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _blendWithSurface(_accentOrange, 0.14),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        _questionTextById(id),
-                        style: TextStyle(
-                          color: _cs.onSurface,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  )
-                  .toList(),
-            ),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                onPressed: _openQuestionsPicker,
-                icon: const Icon(Icons.tune_rounded),
-                label: Text(tr(context, 'analysis_questions_open_search')),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAnalyzeButton() {
-    return SizedBox(
-      width: double.infinity,
-      height: 56,
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: _accentOrange,
-          foregroundColor: Colors.white,
-          disabledBackgroundColor: _cs.surfaceContainerHighest,
-          disabledForegroundColor: _cs.onSurfaceVariant,
-        ),
-        onPressed: (_selectedImage == null || _isAnalyzing)
-            ? null
-            : _analyzeFood,
-        child: Text(
-          _isAnalyzing
-              ? tr(context, 'analyzing')
-              : tr(context, 'start_analysis'),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNutrientCard(String label, String value, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: _blendWithSurface(_accentOrange, 0.08),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: _accentOrangeDeep),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              '$label: $value',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: _cs.onSurface,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildResultCard() {
-    final result = _analysisResult;
-    if (result == null) return const SizedBox.shrink();
-    final cs = _cs;
-
-    final dishName = (result['dish_name'] ?? tr(context, 'unknown_dish'))
-        .toString();
-    final calories = result['calories']?.toString() ?? '-';
-    final protein = result['protein']?.toString() ?? '-';
-    final fats = result['fats']?.toString() ?? '-';
-    final carbs = result['carbs']?.toString() ?? '-';
-    final extraInfo = (result['extra_info'] ?? '').toString().trim();
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.check_circle_rounded, color: cs.secondary),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    dishName,
-                    style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            _buildNutrientCard(
-              tr(context, 'calories'),
-              '$calories ${tr(context, 'kcal')}',
-              Icons.local_fire_department_rounded,
-            ),
-            const SizedBox(height: 8),
-            _buildNutrientCard(
-              tr(context, 'protein'),
-              protein,
-              Icons.fitness_center_rounded,
-            ),
-            const SizedBox(height: 8),
-            _buildNutrientCard(
-              tr(context, 'fats'),
-              fats,
-              Icons.opacity_rounded,
-            ),
-            const SizedBox(height: 8),
-            _buildNutrientCard(
-              tr(context, 'carbs'),
-              carbs,
-              Icons.grain_rounded,
-            ),
-            if (extraInfo.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text(extraInfo, style: TextStyle(color: cs.onSurfaceVariant)),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHistoryPhoto(Map<String, dynamic> item, {double size = 72}) {
-    final photoValue =
-        item['photo'] ??
-        item['photo_url'] ??
-        item['imagePath'] ??
-        item['image_path'] ??
-        item['image_url'];
-
-    final path = photoValue?.toString().trim() ?? '';
-    if (path.isEmpty) {
-      return Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: _blendWithSurface(_accentOrange, 0.12),
-        ),
-        child: Icon(Icons.photo_rounded, color: _accentOrangeDeep),
-      );
-    }
-
-    if (path.startsWith('http://') || path.startsWith('https://')) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.network(
-          path,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => Container(
-            width: size,
-            height: size,
-            color: _blendWithSurface(_accentOrange, 0.12),
-            child: Icon(Icons.broken_image_rounded, color: _accentOrangeDeep),
-          ),
-        ),
-      );
-    }
-
-    final file = File(path);
-    if (!file.existsSync()) {
-      return Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: _blendWithSurface(_accentOrange, 0.12),
-        ),
-        child: Icon(
-          Icons.image_not_supported_rounded,
-          color: _accentOrangeDeep,
-        ),
-      );
-    }
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: Image.file(file, width: size, height: size, fit: BoxFit.cover),
-    );
-  }
-
-  Widget _buildHistoryItemCard(Map<String, dynamic> item) {
-    final cs = _cs;
-    final dish = _historyDishName(item);
-    final date = _formatHistoryDate(_historyDate(item));
-    final statusRaw = _historyStatusRaw(item);
-    final statusLabel = _historyStatusLabel(statusRaw);
-    final statusColor = _historyStatusColor(statusRaw, cs);
-    final calories = _historyCalories(item);
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: () => _openHistoryDetails(item),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          color: _blendWithSurface(_accentOrange, 0.06),
-          border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.6)),
-        ),
-        child: Row(
-          children: [
-            _buildHistoryPhoto(item),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    dish,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.calendar_today_rounded,
-                        size: 14,
-                        color: cs.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          date,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: cs.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: statusColor.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          statusLabel,
-                          style: TextStyle(
-                            color: statusColor,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                      if (calories != null)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: _blendWithSurface(
-                              cs.tertiary,
-                              _isDarkTheme ? 0.26 : 0.12,
-                            ),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            '${calories.round()} ${tr(context, 'kcal')}',
-                            style: TextStyle(
-                              color: cs.tertiary,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            Icon(Icons.chevron_right_rounded, color: cs.onSurfaceVariant),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _openHistoryDetails(Map<String, dynamic> item) {
-    final dish = _historyDishName(item);
-    final calories = _historyCalories(item);
-    final protein = item['protein']?.toString() ?? '-';
-    final fats = item['fats']?.toString() ?? '-';
-    final carbs = item['carbs']?.toString() ?? '-';
-    final extraInfo = (item['extra_info'] ?? item['extraInfo'] ?? '')
-        .toString()
+  Future<void> _applySavedMealState(
+    Map<String, dynamic> analysis,
+    Map<String, dynamic> saved,
+  ) async {
+    final mealId = (saved['mealEntryId'] ?? saved['meal_entry_id'])
+        ?.toString()
         .trim();
+    final savedAt = (saved['savedAt'] ?? saved['saved_at'])?.toString();
+    final analysisId = _analysisIdOf(analysis);
+    final updated = Map<String, dynamic>.from(analysis);
 
-    showModalBottomSheet<void>(
+    if (mealId != null && mealId.isNotEmpty) {
+      updated['saved_meal_id'] = mealId;
+      updated['savedMealId'] = mealId;
+    }
+    if (savedAt != null && savedAt.isNotEmpty) {
+      updated['saved_at'] = savedAt;
+      updated['savedAt'] = savedAt;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      if (analysisId.isNotEmpty &&
+          _analysisIdOf(_analysisResult ?? const {}) == analysisId) {
+        _analysisResult = {...?_analysisResult, ...updated};
+        _savedMealId = mealId;
+      }
+    });
+    await _upsertHistoryItem(updated);
+  }
+
+  Future<void> _saveAnalysisItemAsMeal(Map<String, dynamic> analysis) async {
+    final analysisId = _analysisIdOf(analysis);
+    if (analysisId.isEmpty || _isSavingMeal || !_analysisCanBeSaved(analysis)) {
+      return;
+    }
+
+    final titleCtrl = TextEditingController(text: _historyDishName(analysis));
+    final caloriesCtrl = TextEditingController(
+      text: (analysis['calories'] ?? '').toString(),
+    );
+    final proteinsCtrl = TextEditingController(
+      text: (analysis['protein'] ?? '').toString(),
+    );
+    final fatsCtrl = TextEditingController(
+      text: (analysis['fats'] ?? '').toString(),
+    );
+    final carbsCtrl = TextEditingController(
+      text: (analysis['carbs'] ?? '').toString(),
+    );
+    final notesCtrl = TextEditingController();
+    DateTime eatenAt = DateTime.now();
+
+    final payload = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.9,
-        minChildSize: 0.6,
-        maxChildSize: 0.95,
-        builder: (_, scrollController) => ListView(
-          controller: scrollController,
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-          children: [
-            Text(
-              dish,
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 12),
-            Center(child: _buildHistoryPhoto(item, size: 220)),
-            const SizedBox(height: 16),
-            _buildNutrientCard(
-              tr(context, 'calories'),
-              calories == null
-                  ? '-'
-                  : '${calories.round()} ${tr(context, 'kcal')}',
-              Icons.local_fire_department_rounded,
-            ),
-            const SizedBox(height: 8),
-            _buildNutrientCard(
-              tr(context, 'protein'),
-              protein,
-              Icons.fitness_center_rounded,
-            ),
-            const SizedBox(height: 8),
-            _buildNutrientCard(
-              tr(context, 'fats'),
-              fats,
-              Icons.opacity_rounded,
-            ),
-            const SizedBox(height: 8),
-            _buildNutrientCard(
-              tr(context, 'carbs'),
-              carbs,
-              Icons.grain_rounded,
-            ),
-            if (extraInfo.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: _blendWithSurface(_accentOrange, 0.06),
-                  borderRadius: BorderRadius.circular(12),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            MediaQuery.of(context).viewInsets.bottom + 20,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _isRu ? 'Сохранить как прием пищи' : 'Save as meal',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
                 ),
-                child: Text(extraInfo),
-              ),
-            ],
-          ],
+                const SizedBox(height: 14),
+                TextField(
+                  controller: titleCtrl,
+                  decoration: InputDecoration(
+                    labelText: _isRu ? 'Название' : 'Title',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: caloriesCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: _isRu ? 'Калории' : 'Calories',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: proteinsCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(labelText: 'Protein'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: fatsCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(labelText: 'Fats'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: carbsCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(labelText: 'Carbs'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(_isRu ? 'Когда съедено' : 'Eaten at'),
+                  subtitle: Text(_formatHistoryDate(eatenAt)),
+                  trailing: const Icon(Icons.schedule_rounded),
+                  onTap: () async {
+                    final date = await showDatePicker(
+                      context: context,
+                      initialDate: eatenAt,
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime.now().add(const Duration(days: 365)),
+                    );
+                    if (date == null || !context.mounted) return;
+                    final time = await showTimePicker(
+                      context: context,
+                      initialTime: TimeOfDay.fromDateTime(eatenAt),
+                    );
+                    if (time == null) return;
+                    setSheetState(() {
+                      eatenAt = DateTime(
+                        date.year,
+                        date.month,
+                        date.day,
+                        time.hour,
+                        time.minute,
+                      );
+                    });
+                  },
+                ),
+                TextField(
+                  controller: notesCtrl,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    labelText: _isRu ? 'Заметки' : 'Notes',
+                  ),
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).pop({
+                        'title': titleCtrl.text.trim(),
+                        'calories': int.tryParse(caloriesCtrl.text.trim()),
+                        'proteins': double.tryParse(
+                          proteinsCtrl.text.trim().replaceAll(',', '.'),
+                        ),
+                        'fats': double.tryParse(
+                          fatsCtrl.text.trim().replaceAll(',', '.'),
+                        ),
+                        'carbohydrates': double.tryParse(
+                          carbsCtrl.text.trim().replaceAll(',', '.'),
+                        ),
+                        'eatenAt': eatenAt.toIso8601String(),
+                        'notes': notesCtrl.text.trim().isEmpty
+                            ? null
+                            : notesCtrl.text.trim(),
+                      });
+                    },
+                    child: Text(_isRu ? 'Сохранить' : 'Save'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (payload == null) return;
+
+    setState(() => _isSavingMeal = true);
+    final saved = await repository.saveFoodAnalysis(analysisId, data: payload);
+    if (!mounted) return;
+    setState(() => _isSavingMeal = false);
+    if (saved != null) {
+      await _applySavedMealState(analysis, saved);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          saved != null
+              ? (_isRu ? 'Прием пищи сохранен' : 'Meal saved')
+              : (_isRu
+                    ? 'Не удалось сохранить прием пищи'
+                    : 'Failed to save meal'),
         ),
       ),
     );
   }
 
-  Widget _buildAnalysisHistoryCard() {
-    final cs = _cs;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.history_rounded, color: _accentOrangeDeep),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    tr(context, 'analysis_history_title'),
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (_isHistoryLoading)
-              const Center(child: CircularProgressIndicator())
-            else if (_analysisHistory.isEmpty)
-              Text(
-                tr(context, 'analysis_history_empty'),
-                style: TextStyle(color: cs.onSurfaceVariant),
-              )
-            else
-              Column(
-                children: _analysisHistory
-                    .map(
-                      (item) => Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: _buildHistoryItemCard(item),
-                      ),
-                    )
-                    .toList(),
-              ),
-          ],
-        ),
-      ),
-    );
+  Future<void> _saveAnalysisAsMeal() async {
+    if (_analysisResult == null) return;
+    await _saveAnalysisItemAsMeal(_analysisResult!);
   }
 
   @override
@@ -1276,62 +1084,23 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
             tooltip: tr(context, 'settings'),
             onPressed: () => showAppSettingsSheet(context),
           ),
-          AppTopAction(
-            icon: Icons.logout_rounded,
-            tooltip: tr(context, 'logout'),
-            destructive: true,
-            onPressed: () async {
-              await apiService.logout();
-              if (!context.mounted) return;
-              Navigator.pushReplacementNamed(context, '/login');
-            },
-          ),
         ],
       ),
       body: RefreshIndicator(
         onRefresh: _refreshAnalyzeScreen,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
-          child: Container(
-            decoration: BoxDecoration(
-              color: _panelBackground,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(34),
-                bottom: Radius.circular(34),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(
-                    alpha: _isDarkTheme ? 0.24 : 0.06,
-                  ),
-                  blurRadius: 22,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(34),
-                bottom: Radius.circular(34),
-              ),
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
-                child: Column(
-                  children: [
-                    _buildImagePickerCard(),
-                    const SizedBox(height: 24),
-                    _buildQuestionsCard(),
-                    const SizedBox(height: 24),
-                    _buildAnalyzeButton(),
-                    const SizedBox(height: 24),
-                    if (_analysisResult != null) _buildResultCard(),
-                    const SizedBox(height: 24),
-                    _buildAnalysisHistoryCard(),
-                  ],
-                ),
-              ),
-            ),
-          ),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
+          children: [
+            _buildImagePickerCard(),
+            const SizedBox(height: 24),
+            _buildQuestionsCard(),
+            const SizedBox(height: 24),
+            _buildAnalyzeButton(),
+            const SizedBox(height: 24),
+            if (_analysisResult != null) _buildResultCard(),
+            if (_analysisResult != null) const SizedBox(height: 24),
+            _buildAnalysisHistoryCard(),
+          ],
         ),
       ),
     );
