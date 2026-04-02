@@ -15,6 +15,7 @@ tmp_food_patch/
 tmp_resume/
 out/
 tmp_food_backend_phase1.sh
+tmp/sora/
 
 # IntelliJ related
 *.iml
