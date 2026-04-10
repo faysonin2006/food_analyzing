@@ -69,6 +69,8 @@ extension _RecipeSearchScreenUi on _RecipeSearchScreenState {
   Future<void> _openFiltersSheet() async {
     await showModalBottomSheet<void>(
       context: context,
+      isDismissible: true,
+      enableDrag: true,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
@@ -115,6 +117,7 @@ extension _RecipeSearchScreenUi on _RecipeSearchScreenState {
 
             return AtelierSheetFrame(
               title: _isRu ? 'Фильтры рецептов' : 'Recipe filters',
+              onClose: () => Navigator.of(sheetContext).maybePop(),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -320,15 +323,47 @@ extension _RecipeSearchScreenUi on _RecipeSearchScreenState {
             const SizedBox(width: 8),
             _topChromeButton(
               tooltip: _isRu ? 'Уведомления' : 'Notifications',
-              onTap: () => _showMessage(
-                _isRu
-                    ? 'Уведомления появятся в одном из следующих проходов.'
-                    : 'Notifications will be added in a follow-up pass.',
-              ),
-              child: Icon(
-                Icons.notifications_none_rounded,
-                size: 20,
-                color: cs.onSurfaceVariant,
+              onTap: () => showAppInboxSheet(context),
+              child: AnimatedBuilder(
+                animation: AppFeedbackCenter.instance,
+                builder: (_, _) {
+                  final unread = AppFeedbackCenter.instance.unreadCount;
+                  return Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Icon(
+                        unread > 0
+                            ? Icons.notifications_rounded
+                            : Icons.notifications_none_rounded,
+                        size: 20,
+                        color: unread > 0 ? cs.primary : cs.onSurfaceVariant,
+                      ),
+                      if (unread > 0)
+                        Positioned(
+                          top: -6,
+                          right: -7,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: cs.primary,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              unread > 99 ? '99+' : '$unread',
+                              style: TextStyle(
+                                color: cs.onPrimary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
               ),
             ),
             const SizedBox(width: 8),
@@ -586,12 +621,19 @@ extension _RecipeSearchScreenUi on _RecipeSearchScreenState {
                       ),
                     ),
                   ],
-                  if (recipe.searchMatchReasons.isNotEmpty) ...[
+                  if (recipe.searchMatchReasons.where((reason) {
+                    final normalized = reason.trim().toLowerCase();
+                    return normalized != 'text_match';
+                  }).isNotEmpty) ...[
                     const SizedBox(height: 10),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: recipe.searchMatchReasons
+                          .where((reason) {
+                            final normalized = reason.trim().toLowerCase();
+                            return normalized != 'text_match';
+                          })
                           .take(3)
                           .map(searchReasonChip)
                           .toList(),

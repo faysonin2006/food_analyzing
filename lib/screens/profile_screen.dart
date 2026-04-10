@@ -7,6 +7,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/app_feedback.dart';
+import '../core/live_refresh.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
 import '../core/app_scope.dart';
@@ -52,7 +54,7 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, LiveRefreshState<ProfileScreen> {
   static const String _weightHistoryStoragePrefix = 'profile_weight_history_v1';
   static const String _weightPeriodStorageKey = 'profile_weight_period_days_v1';
   static const int _weightHistoryChartDays = 7;
@@ -69,6 +71,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   bool _isFetchingProfile = false;
   File? _profileAvatarFile;
   DateTime? _lastAutoRefreshAt;
+  String _lastProfileSnapshotSignature = '';
 
   late TextEditingController _nameController;
   late TextEditingController _dobController;
@@ -127,6 +130,34 @@ class _ProfileScreenState extends State<ProfileScreen>
   ThemeData get _theme => Theme.of(context);
   ColorScheme get _cs => _theme.colorScheme;
   bool get _isDarkTheme => _theme.brightness == Brightness.dark;
+  String get _feedbackSource => tr(context, 'tab_profile');
+
+  void _showFeedback(
+    String message, {
+    AppFeedbackKind? kind,
+    bool preferPopup = false,
+    bool addToInbox = true,
+  }) {
+    if (!mounted) return;
+    showAppFeedback(
+      context,
+      message,
+      kind: kind,
+      source: _feedbackSource,
+      preferPopup: preferPopup,
+      addToInbox: addToInbox,
+    );
+  }
+
+  @override
+  Duration get liveRefreshInterval => const Duration(seconds: 15);
+
+  @override
+  bool get enableLiveRefresh =>
+      widget.isActive && (ModalRoute.of(context)?.isCurrent ?? true);
+
+  @override
+  Future<void> performLiveRefresh() => _loadProfile(silent: true);
 
   @override
   void initState() {
@@ -150,7 +181,7 @@ class _ProfileScreenState extends State<ProfileScreen>
 
       if (canRefresh && !_isFetchingProfile) {
         _lastAutoRefreshAt = now;
-        _refreshProfile();
+        triggerLiveRefreshNow();
       }
     }
   }
@@ -469,14 +500,15 @@ class _ProfileScreenState extends State<ProfileScreen>
                               controller.text.trim().replaceAll(',', '.'),
                             );
                             if (parsed == null || parsed <= 0) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    _isRu
-                                        ? 'Введи корректный вес'
-                                        : 'Enter a valid weight',
-                                  ),
-                                ),
+                              showAppFeedback(
+                                context,
+                                _isRu
+                                    ? 'Введи корректный вес'
+                                    : 'Enter a valid weight',
+                                kind: AppFeedbackKind.error,
+                                source: _feedbackSource,
+                                preferPopup: true,
+                                addToInbox: false,
                               );
                               return;
                             }
@@ -508,15 +540,11 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          synced
-              ? (_isRu ? 'Вес сохранён' : 'Weight saved')
-              : (_isRu ? 'Вес сохранён локально' : 'Weight saved locally'),
-        ),
-        backgroundColor: synced ? _cs.secondary : _cs.tertiary,
-      ),
+    _showFeedback(
+      synced
+          ? (_isRu ? 'Вес сохранён' : 'Weight saved')
+          : (_isRu ? 'Вес сохранён локально' : 'Weight saved locally'),
+      kind: synced ? AppFeedbackKind.success : AppFeedbackKind.info,
     );
 
     if (synced) {
@@ -674,24 +702,33 @@ class _ProfileScreenState extends State<ProfileScreen>
     return tr(context, 'bmi_state_high');
   }
 
-  Future<void> _loadProfile() async {
+  Future<void> _loadProfile({bool silent = false}) async {
     if (_isFetchingProfile) return;
     _isFetchingProfile = true;
-    setState(() => _isLoadingProfile = true);
-    final profile = await repository.getProfile();
-    if (!mounted) {
-      _isFetchingProfile = false;
-      return;
+    if (!silent) {
+      setState(() => _isLoadingProfile = true);
     }
+    try {
+      final profile = await repository.getProfile();
+      if (!mounted) return;
 
-    setState(() {
-      if (profile != null) {
-        _profile = profile;
+      final nextProfile = profile ?? _profile;
+      final nextSignature = liveRefreshSignature(nextProfile);
+      final hasChanged = nextSignature != _lastProfileSnapshotSignature;
+
+      if (hasChanged || !silent || _isLoadingProfile) {
+        setState(() {
+          if (profile != null) {
+            _profile = profile;
+          }
+          _isLoadingProfile = false;
+        });
+        await _loadWeightHistory(profileSource: nextProfile);
       }
-      _isLoadingProfile = false;
-    });
-    await _loadWeightHistory(profileSource: profile ?? _profile);
-    _isFetchingProfile = false;
+      _lastProfileSnapshotSignature = nextSignature;
+    } finally {
+      _isFetchingProfile = false;
+    }
   }
 
   Future<void> _refreshProfile() async {
@@ -711,8 +748,11 @@ class _ProfileScreenState extends State<ProfileScreen>
 
     if (!status.isGranted) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr(context, 'permission_denied'))),
+        _showFeedback(
+          tr(context, 'permission_denied'),
+          kind: AppFeedbackKind.error,
+          preferPopup: true,
+          addToInbox: false,
         );
       }
       return null;
@@ -734,14 +774,17 @@ class _ProfileScreenState extends State<ProfileScreen>
       await _loadProfile();
       if (!mounted) return;
       setState(() => _profileAvatarFile = null);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(tr(context, 'profile_saved'))));
+      _showFeedback(
+        tr(context, 'profile_saved'),
+        kind: AppFeedbackKind.success,
+      );
     } else {
       setState(() => _profileAvatarFile = null);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(tr(context, 'error'))));
+      _showFeedback(
+        tr(context, 'save_error'),
+        kind: AppFeedbackKind.error,
+        preferPopup: true,
+      );
     }
   }
 
@@ -779,7 +822,6 @@ class _ProfileScreenState extends State<ProfileScreen>
   Future<void> _saveProfile(BuildContext sheetContext) async {
     try {
       FocusManager.instance.primaryFocus?.unfocus();
-      final messenger = ScaffoldMessenger.of(context);
       final profileSavedLabel = tr(context, 'profile_saved');
       final saveErrorLabel = tr(context, 'save_error');
 
@@ -816,24 +858,22 @@ class _ProfileScreenState extends State<ProfileScreen>
         if (sheetContext.mounted) {
           Navigator.pop(sheetContext);
         }
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(profileSavedLabel),
-            backgroundColor: _cs.secondary,
-          ),
-        );
+        _showFeedback(profileSavedLabel, kind: AppFeedbackKind.success);
         await _loadProfile();
       } else {
-        messenger.showSnackBar(
-          SnackBar(content: Text(saveErrorLabel), backgroundColor: _cs.error),
+        _showFeedback(
+          saveErrorLabel,
+          kind: AppFeedbackKind.error,
+          preferPopup: true,
         );
       }
     } catch (e) {
       if (!mounted) return;
-      final messenger = ScaffoldMessenger.of(context);
       final errorLabel = tr(context, 'error');
-      messenger.showSnackBar(
-        SnackBar(content: Text('$errorLabel: $e'), backgroundColor: _cs.error),
+      _showFeedback(
+        '$errorLabel: $e',
+        kind: AppFeedbackKind.error,
+        preferPopup: true,
       );
     }
   }

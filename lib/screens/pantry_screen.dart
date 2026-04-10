@@ -1,15 +1,15 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../core/app_feedback.dart';
+import '../core/live_refresh.dart';
 import '../core/app_theme.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
-import '../core/smart_food_suggestions.dart';
-import '../core/smart_suggestion_ml.dart';
-import '../core/smart_suggestion_panel.dart';
+import '../core/food_suggestions.dart';
+import '../core/suggestion_panel.dart';
 import '../repositories/app_repository.dart';
 import '../services/api_service.dart';
 import 'barcode_scanner_screen.dart';
@@ -23,15 +23,18 @@ class PantryScreen extends StatefulWidget {
   State<PantryScreen> createState() => _PantryScreenState();
 }
 
-class _PantryScreenState extends State<PantryScreen> {
+class _PantryScreenState extends State<PantryScreen>
+    with LiveRefreshState<PantryScreen> {
   final AppRepository repository = AppRepository.instance;
 
   bool _loading = true;
+  bool _isFetching = false;
   bool _didScheduleInitialLoad = false;
   _PantryListMode _mode = _PantryListMode.all;
   List<Map<String, dynamic>> _items = const [];
   List<Map<String, dynamic>> _expiring = const [];
   List<Map<String, dynamic>> _expired = const [];
+  String _lastSnapshotSignature = '';
 
   bool get _isRu => Localizations.localeOf(context).languageCode == 'ru';
   ThemeData get _theme => Theme.of(context);
@@ -46,11 +49,21 @@ class _PantryScreenState extends State<PantryScreen> {
     return text.startsWith('Exception: ') ? text.substring(11) : text;
   }
 
-  void _showMessage(String message) {
+  void _showMessage(
+    String message, {
+    AppFeedbackKind? kind,
+    bool preferPopup = false,
+    bool addToInbox = true,
+  }) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
+    showAppFeedback(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+      message,
+      kind: kind,
+      source: _screenTitle,
+      preferPopup: preferPopup,
+      addToInbox: addToInbox,
+    );
   }
 
   Future<T> _loadWithFallback<T>({
@@ -132,9 +145,13 @@ class _PantryScreenState extends State<PantryScreen> {
   }
 
   @override
-  void initState() {
-    super.initState();
-  }
+  Duration get liveRefreshInterval => const Duration(seconds: 8);
+
+  @override
+  bool get enableLiveRefresh => ModalRoute.of(context)?.isCurrent ?? true;
+
+  @override
+  Future<void> performLiveRefresh() => _load(silent: true);
 
   @override
   void didChangeDependencies() {
@@ -147,46 +164,65 @@ class _PantryScreenState extends State<PantryScreen> {
     });
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  Future<void> _load({bool silent = false}) async {
+    if (_isFetching) return;
+    _isFetching = true;
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     final errors = <String>[];
-    final itemsFuture = _loadWithFallback<List<Map<String, dynamic>>>(
-      future: repository.getPantryItems(),
-      fallback: _items,
-      errors: errors,
-      fallbackMessage: _isRu
-          ? 'Не удалось загрузить продукты'
-          : 'Failed to load pantry items',
-    );
-    final expiringFuture = _loadWithFallback<List<Map<String, dynamic>>>(
-      future: repository.getExpiringPantryItems(),
-      fallback: _expiring,
-      errors: errors,
-      fallbackMessage: _isRu
-          ? 'Не удалось загрузить продукты с истекающим сроком'
-          : 'Failed to load expiring pantry items',
-    );
-    final expiredFuture = _loadWithFallback<List<Map<String, dynamic>>>(
-      future: repository.getExpiredPantryItems(),
-      fallback: _expired,
-      errors: errors,
-      fallbackMessage: _isRu
-          ? 'Не удалось загрузить просроченные продукты'
-          : 'Failed to load expired pantry items',
-    );
+    try {
+      final itemsFuture = _loadWithFallback<List<Map<String, dynamic>>>(
+        future: repository.getPantryItems(),
+        fallback: _items,
+        errors: errors,
+        fallbackMessage: _isRu
+            ? 'Не удалось загрузить продукты'
+            : 'Failed to load pantry items',
+      );
+      final expiringFuture = _loadWithFallback<List<Map<String, dynamic>>>(
+        future: repository.getExpiringPantryItems(),
+        fallback: _expiring,
+        errors: errors,
+        fallbackMessage: _isRu
+            ? 'Не удалось загрузить продукты с истекающим сроком'
+            : 'Failed to load expiring pantry items',
+      );
+      final expiredFuture = _loadWithFallback<List<Map<String, dynamic>>>(
+        future: repository.getExpiredPantryItems(),
+        fallback: _expired,
+        errors: errors,
+        fallbackMessage: _isRu
+            ? 'Не удалось загрузить просроченные продукты'
+            : 'Failed to load expired pantry items',
+      );
 
-    final items = await itemsFuture;
-    final expiring = await expiringFuture;
-    final expired = await expiredFuture;
+      final items = await itemsFuture;
+      final expiring = await expiringFuture;
+      final expired = await expiredFuture;
+      final nextSignature = liveRefreshSignature(<String, Object?>{
+        'items': items,
+        'expiring': expiring,
+        'expired': expired,
+      });
 
-    if (!mounted) return;
-    setState(() {
-      _items = items;
-      _expiring = expiring;
-      _expired = expired;
-      _loading = false;
-    });
-    _showLoadWarnings(errors);
+      if (!mounted) return;
+      final hasChanged = nextSignature != _lastSnapshotSignature;
+      if (hasChanged || !silent || _loading) {
+        setState(() {
+          _items = items;
+          _expiring = expiring;
+          _expired = expired;
+          _loading = false;
+        });
+      }
+      _lastSnapshotSignature = nextSignature;
+      if (!silent) {
+        _showLoadWarnings(errors);
+      }
+    } finally {
+      _isFetching = false;
+    }
   }
 
   List<Map<String, dynamic>> get _visibleItems => switch (_mode) {
@@ -296,6 +332,9 @@ class _PantryScreenState extends State<PantryScreen> {
           _isRu
               ? 'Товар не найден, заполни данные вручную'
               : 'Product not found, continue filling it manually',
+          kind: AppFeedbackKind.info,
+          preferPopup: true,
+          addToInbox: false,
         );
         await _openEditor(prefill: {'barcode': normalizedBarcode});
         return;
@@ -415,6 +454,8 @@ class _PantryScreenState extends State<PantryScreen> {
           : (_isRu
                 ? 'Продукт сохранен, но изображение не загрузилось'
                 : 'Pantry item saved, but the image upload failed'),
+      kind: imageUploaded ? AppFeedbackKind.success : AppFeedbackKind.error,
+      preferPopup: !imageUploaded,
     );
     await _load();
   }
@@ -880,7 +921,6 @@ class _PantryEditorSheet extends StatefulWidget {
 }
 
 class _PantryEditorSheetState extends State<_PantryEditorSheet> {
-  final AppRepository _repository = AppRepository.instance;
   final _picker = ImagePicker();
   late final TextEditingController _nameController;
   late final TextEditingController _brandController;
@@ -897,10 +937,8 @@ class _PantryEditorSheetState extends State<_PantryEditorSheet> {
   late Map<String, String> _fieldSources;
   bool _rememberBarcode = false;
   XFile? _imageFile;
-  List<SmartSuggestionOption> _nameSuggestions = const [];
-  List<SmartSuggestionOption> _categorySuggestions = const [];
-  Timer? _nameSuggestionDebounce;
-  int _activeNameSuggestionRequestId = 0;
+  List<SuggestionOption> _nameSuggestions = const [];
+  List<SuggestionOption> _categorySuggestions = const [];
 
   bool get _isRu => Localizations.localeOf(context).languageCode == 'ru';
   String _unitLabel(String raw) {
@@ -999,7 +1037,6 @@ class _PantryEditorSheetState extends State<_PantryEditorSheet> {
 
   @override
   void dispose() {
-    _nameSuggestionDebounce?.cancel();
     _barcodeController.removeListener(_handleBarcodeChanged);
     _nameController.dispose();
     _brandController.dispose();
@@ -1021,58 +1058,22 @@ class _PantryEditorSheetState extends State<_PantryEditorSheet> {
 
   void _refreshNameSuggestions() {
     final query = _nameController.text;
-    final candidates = SmartFoodSuggestions.collectProductSuggestions(
+    final candidates = FoodSuggestions.collectProductSuggestions(
       isRu: _isRu,
       pantryItems: widget.suggestionItems,
     );
     setState(() {
-      _nameSuggestions = SmartSuggestionMl.localVisibleSuggestions(
-        candidates: candidates,
+      _nameSuggestions = FoodSuggestions.rankSuggestions(
+        candidates,
         query: query,
         limit: 6,
       );
     });
-
-    _nameSuggestionDebounce?.cancel();
-    final trimmedQuery = query.trim();
-    if (trimmedQuery.isEmpty || candidates.isEmpty) {
-      return;
-    }
-
-    final requestId = ++_activeNameSuggestionRequestId;
-    _nameSuggestionDebounce = Timer(
-      const Duration(milliseconds: 220),
-      () async {
-        final ranked = await SmartSuggestionMl.rerankSuggestions(
-          query: trimmedQuery,
-          candidates: candidates,
-          visibleLimit: 6,
-          ranker:
-              ({
-                required String query,
-                required List<Map<String, dynamic>> candidates,
-                required int limit,
-              }) {
-                return _repository.rerankSuggestionCandidateIds(
-                  query: query,
-                  candidates: candidates,
-                  limit: limit,
-                );
-              },
-        );
-        if (!mounted ||
-            requestId != _activeNameSuggestionRequestId ||
-            _nameController.text.trim() != trimmedQuery) {
-          return;
-        }
-        setState(() => _nameSuggestions = ranked);
-      },
-    );
   }
 
   void _refreshCategorySuggestions() {
     setState(() {
-      _categorySuggestions = SmartFoodSuggestions.buildCategorySuggestions(
+      _categorySuggestions = FoodSuggestions.buildCategorySuggestions(
         query: _categoryController.text,
         isRu: _isRu,
         pantryItems: widget.suggestionItems,
@@ -1081,9 +1082,7 @@ class _PantryEditorSheetState extends State<_PantryEditorSheet> {
     });
   }
 
-  void _applyNameSuggestion(SmartSuggestionOption option) {
-    _nameSuggestionDebounce?.cancel();
-    _activeNameSuggestionRequestId++;
+  void _applyNameSuggestion(SuggestionOption option) {
     _nameController.text = option.primaryText;
     _nameController.selection = TextSelection.collapsed(
       offset: _nameController.text.length,
@@ -1105,19 +1104,19 @@ class _PantryEditorSheetState extends State<_PantryEditorSheet> {
     }
     FocusScope.of(context).unfocus();
     setState(() {
-      _nameSuggestions = const <SmartSuggestionOption>[];
-      _categorySuggestions = const <SmartSuggestionOption>[];
+      _nameSuggestions = const <SuggestionOption>[];
+      _categorySuggestions = const <SuggestionOption>[];
     });
   }
 
-  void _applyCategorySuggestion(SmartSuggestionOption option) {
+  void _applyCategorySuggestion(SuggestionOption option) {
     _categoryController.text = option.primaryText;
     _categoryController.selection = TextSelection.collapsed(
       offset: _categoryController.text.length,
     );
     FocusScope.of(context).unfocus();
     setState(() {
-      _categorySuggestions = const <SmartSuggestionOption>[];
+      _categorySuggestions = const <SuggestionOption>[];
     });
   }
 
@@ -1171,9 +1170,14 @@ class _PantryEditorSheetState extends State<_PantryEditorSheet> {
       DateTime(value.year, value.month, value.day);
 
   void _showValidationMessage(String message) {
-    ScaffoldMessenger.of(
+    showAppFeedback(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+      message,
+      kind: AppFeedbackKind.error,
+      source: _isRu ? 'Редактор кладовой' : 'Pantry editor',
+      preferPopup: true,
+      addToInbox: false,
+    );
   }
 
   String _sourceLabel(String raw) {
@@ -1389,11 +1393,9 @@ class _PantryEditorSheetState extends State<_PantryEditorSheet> {
                   onTap: _refreshNameSuggestions,
                   onChanged: (_) => _refreshNameSuggestions(),
                   onTapOutside: (_) {
-                    _nameSuggestionDebounce?.cancel();
-                    _activeNameSuggestionRequestId++;
                     FocusScope.of(context).unfocus();
                     setState(
-                      () => _nameSuggestions = const <SmartSuggestionOption>[],
+                      () => _nameSuggestions = const <SuggestionOption>[],
                     );
                   },
                   decoration: InputDecoration(
@@ -1433,8 +1435,7 @@ class _PantryEditorSheetState extends State<_PantryEditorSheet> {
                   onTapOutside: (_) {
                     FocusScope.of(context).unfocus();
                     setState(
-                      () => _categorySuggestions =
-                          const <SmartSuggestionOption>[],
+                      () => _categorySuggestions = const <SuggestionOption>[],
                     );
                   },
                   decoration: InputDecoration(

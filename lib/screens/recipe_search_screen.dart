@@ -1,12 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../core/app_feedback.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_scope.dart';
 import '../core/settings_sheet.dart';
-import '../core/smart_food_suggestions.dart';
-import '../core/smart_suggestion_ml.dart';
-import '../core/smart_suggestion_panel.dart';
+import '../core/food_suggestions.dart';
+import '../core/suggestion_panel.dart';
 import '../core/tr.dart';
 import '../local/search_history_local_db.dart';
 import '../repositories/app_repository.dart';
@@ -131,9 +131,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
   bool _pantryNamesReady = false;
   Future<void>? _pantryNamesLoadFuture;
   Set<String> _pantryNames = const {};
-  List<SmartSuggestionOption> _searchSuggestions = const [];
-  Timer? _searchSuggestionDebounce;
-  int _activeSuggestionRequestId = 0;
+  List<SuggestionOption> _searchSuggestions = const [];
 
   String? diet;
   String? selectedKeyword;
@@ -157,6 +155,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
   ColorScheme get _cs => Theme.of(context).colorScheme;
   bool get _isDarkTheme => _theme.brightness == Brightness.dark;
   Color get _screenBackground => _theme.scaffoldBackgroundColor;
+  String get _screenTitle => _isRu ? 'Рецепты' : 'Recipes';
   List<String> get _activeQuickKeywords =>
       _isRu ? _recipeSearchQuickKeywordsRu : _recipeSearchQuickKeywordsEn;
   String get _langUpper =>
@@ -169,11 +168,21 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     return text.startsWith('Exception: ') ? text.substring(11) : text;
   }
 
-  void _showMessage(String message) {
+  void _showMessage(
+    String message, {
+    AppFeedbackKind? kind,
+    bool preferPopup = false,
+    bool addToInbox = true,
+  }) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
+    showAppFeedback(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+      message,
+      kind: kind,
+      source: _screenTitle,
+      preferPopup: preferPopup,
+      addToInbox: addToInbox,
+    );
   }
 
   Future<T> _loadWithFallback<T>({
@@ -233,7 +242,6 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
 
   @override
   void dispose() {
-    _searchSuggestionDebounce?.cancel();
     titleCtrl.removeListener(_handleTitleInputChanged);
     _titleFocusNode.removeListener(_handleTitleFocusChanged);
     likes.removeListener(_onLikesChanged);
@@ -258,6 +266,24 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     FocusManager.instance.primaryFocus?.unfocus();
   }
 
+  bool _queryHasWrongAlphabet(String text) {
+    final normalized = text.trim();
+    if (normalized.isEmpty) return false;
+    final hasLatin = RegExp(r'[A-Za-z]').hasMatch(normalized);
+    final hasCyrillic = RegExp(r'[А-Яа-яЁё]').hasMatch(normalized);
+    if (_isRu) {
+      return hasLatin;
+    }
+    return hasCyrillic;
+  }
+
+  String _wrongAlphabetSearchMessage() {
+    if (_isRu) {
+      return 'В русском интерфейсе доступен поиск только по русским рецептам';
+    }
+    return 'English interface searches only English recipes';
+  }
+
   void _handleTitleInputChanged() {
     if (!_titleFocusNode.hasFocus) return;
     _refreshSearchSuggestions();
@@ -274,69 +300,30 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
 
   void _refreshSearchSuggestions() {
     final query = titleCtrl.text;
-    final candidates = SmartFoodSuggestions.collectRecipeSuggestions(
+    if (_queryHasWrongAlphabet(query)) {
+      if (mounted && _searchSuggestions.isNotEmpty) {
+        setState(() => _searchSuggestions = const []);
+      }
+      return;
+    }
+    final candidates = FoodSuggestions.collectRecipeSuggestions(
       isRu: _isRu,
       history: _searchHistory,
       keywords: _activeQuickKeywords,
     );
-    final local = SmartSuggestionMl.localVisibleSuggestions(
-      candidates: candidates,
+    final local = FoodSuggestions.rankSuggestions(
+      candidates,
       query: query,
       limit: 7,
     );
     if (!_sameSuggestionList(_searchSuggestions, local) && mounted) {
       setState(() => _searchSuggestions = local);
     }
-    _scheduleMlSearchSuggestionRerank(query, candidates);
-  }
-
-  void _scheduleMlSearchSuggestionRerank(
-    String query,
-    List<SmartSuggestionOption> candidates,
-  ) {
-    _searchSuggestionDebounce?.cancel();
-    final trimmedQuery = query.trim();
-    if (trimmedQuery.isEmpty || candidates.isEmpty) {
-      return;
-    }
-
-    final requestId = ++_activeSuggestionRequestId;
-    _searchSuggestionDebounce = Timer(
-      const Duration(milliseconds: 220),
-      () async {
-        final ranked = await SmartSuggestionMl.rerankSuggestions(
-          query: trimmedQuery,
-          candidates: candidates,
-          visibleLimit: 7,
-          ranker:
-              ({
-                required String query,
-                required List<Map<String, dynamic>> candidates,
-                required int limit,
-              }) {
-                return repository.rerankSuggestionCandidateIds(
-                  query: query,
-                  candidates: candidates,
-                  limit: limit,
-                );
-              },
-        );
-
-        if (!mounted ||
-            requestId != _activeSuggestionRequestId ||
-            !_titleFocusNode.hasFocus ||
-            titleCtrl.text.trim() != trimmedQuery) {
-          return;
-        }
-        if (_sameSuggestionList(_searchSuggestions, ranked)) return;
-        setState(() => _searchSuggestions = ranked);
-      },
-    );
   }
 
   bool _sameSuggestionList(
-    List<SmartSuggestionOption> left,
-    List<SmartSuggestionOption> right,
+    List<SuggestionOption> left,
+    List<SuggestionOption> right,
   ) {
     if (identical(left, right)) return true;
     if (left.length != right.length) return false;
@@ -349,9 +336,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     return true;
   }
 
-  Future<void> _applySearchSuggestion(SmartSuggestionOption option) async {
-    _searchSuggestionDebounce?.cancel();
-    _activeSuggestionRequestId++;
+  Future<void> _applySearchSuggestion(SuggestionOption option) async {
     _safeSetState(() {
       titleCtrl.text = option.primaryText;
       titleCtrl.selection = TextSelection.collapsed(
@@ -433,28 +418,6 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
       _pantryNamesReady = true;
       _pantryNamesLoadFuture = null;
     }
-  }
-
-  Future<List<RecipeSummary>> _loadPantryRecommendedResults({
-    required String lang,
-  }) async {
-    var recommended = _recommendedPantryRecipes;
-    if (recommended.isEmpty) {
-      recommended = await repository.getRecommendedRecipes(
-        size: _pageSize,
-        lang: lang,
-      );
-      _recommendedPantryRecipes = recommended;
-      if (mounted) {
-        setState(() {});
-      }
-    }
-
-    final recipes = recommended
-        .map(RecipeSummary.fromRecommendation)
-        .where((recipe) => recipe.id > 0 && recipe.title.trim().isNotEmpty)
-        .toList();
-    return _hydrateRecipeSummaries(recipes);
   }
 
   bool _recipeNeedsCardHydration(RecipeSummary recipe) {
@@ -830,6 +793,22 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     final requestedPage = page < 1 ? 1 : page;
     final previousPage = currentPage;
     final requestId = ++_activeSearchRequestId;
+    final lang = AppScope.settingsOf(context).locale.languageCode;
+    final selectedKeywordValue = (selectedKeyword ?? '').trim().isNotEmpty
+        ? selectedKeyword!.trim()
+        : keywordCtrl.text.trim();
+    final titleQuery = titleCtrl.text.trim();
+    final combinedQuery = _composeSearchQuery(titleQuery, selectedKeywordValue);
+
+    if (_queryHasWrongAlphabet(combinedQuery)) {
+      _showMessage(
+        _wrongAlphabetSearchMessage(),
+        kind: AppFeedbackKind.info,
+        preferPopup: true,
+        addToInbox: false,
+      );
+      return;
+    }
 
     setState(() {
       loading = true;
@@ -841,62 +820,24 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     });
 
     try {
-      final lang = AppScope.settingsOf(context).locale.languageCode;
-      final selectedKeywordValue = (selectedKeyword ?? '').trim().isNotEmpty
-          ? selectedKeyword!.trim()
-          : keywordCtrl.text.trim();
-      final titleQuery = titleCtrl.text.trim();
-      final combinedQuery = _composeSearchQuery(
-        titleQuery,
-        selectedKeywordValue,
-      );
       final hasDirectTextSearch = combinedQuery.isNotEmpty;
-      final hasSearchCriteria =
-          hasDirectTextSearch || (diet ?? '').trim().isNotEmpty;
-      final shouldShowPantryRecommendations =
-          !hasSearchCriteria && requestedPage == 1;
-
       List<RecipeSummary> list;
       bool nextPageAvailable;
       int? pageCount;
 
-      if (shouldShowPantryRecommendations) {
-        final recommended = await _loadPantryRecommendedResults(lang: lang);
-        if (!mounted || requestId != _activeSearchRequestId) return;
-        if (recommended.isNotEmpty) {
-          list = recommended;
-          nextPageAvailable = false;
-          pageCount = 1;
-        } else {
-          final pageResult = await repository.searchRecipesPage(
-            diet: diet,
-            title: combinedQuery,
-            category: null,
-            lang: lang,
-            page: requestedPage,
-            size: _pageSize,
-          );
-          list = hasDirectTextSearch
-              ? pageResult.items
-              : await _rankRecipesByPantry(pageResult.items);
-          nextPageAvailable = pageResult.hasNext;
-          pageCount = pageResult.totalPages;
-        }
-      } else {
-        final pageResult = await repository.searchRecipesPage(
-          diet: diet,
-          title: combinedQuery,
-          category: null,
-          lang: lang,
-          page: requestedPage,
-          size: _pageSize,
-        );
-        list = hasDirectTextSearch
-            ? pageResult.items
-            : await _rankRecipesByPantry(pageResult.items);
-        nextPageAvailable = pageResult.hasNext;
-        pageCount = pageResult.totalPages;
-      }
+      final pageResult = await repository.searchRecipesPage(
+        diet: diet,
+        title: combinedQuery,
+        category: null,
+        lang: lang,
+        page: requestedPage,
+        size: _pageSize,
+      );
+      list = hasDirectTextSearch
+          ? pageResult.items
+          : await _rankRecipesByPantry(pageResult.items);
+      nextPageAvailable = pageResult.hasNext;
+      pageCount = pageResult.totalPages;
 
       list = await _hydrateRecipeSummaries(list);
 
@@ -907,12 +848,11 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
           hasNextPage = false;
           currentPage = previousPage;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _isRu ? 'Это последняя страница' : 'This is the last page',
-            ),
-          ),
+        _showMessage(
+          _isRu ? 'Это последняя страница' : 'This is the last page',
+          kind: AppFeedbackKind.info,
+          preferPopup: true,
+          addToInbox: false,
         );
         return;
       }
@@ -944,9 +884,11 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
           totalPages = null;
         }
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(tr(context, 'search_error'))));
+      _showMessage(
+        tr(context, 'search_error'),
+        kind: AppFeedbackKind.error,
+        preferPopup: true,
+      );
     }
   }
 
@@ -1011,12 +953,10 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
   Future<void> _toggleLike(int recipeId) async {
     final ok = await likes.toggle(recipeId);
     if (ok || !mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _isRu ? 'Не удалось обновить лайк' : 'Failed to update like',
-        ),
-      ),
+    _showMessage(
+      _isRu ? 'Не удалось обновить лайк' : 'Failed to update like',
+      kind: AppFeedbackKind.error,
+      preferPopup: true,
     );
   }
 
@@ -1054,8 +994,13 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
   void _applyKeyword(String keyword) {
     final k = keyword.trim();
     if (k.isEmpty) return;
-    selectedKeyword = k;
-    keywordCtrl.text = k;
+    if ((selectedKeyword ?? '').trim().toLowerCase() == k.toLowerCase()) {
+      selectedKeyword = null;
+      keywordCtrl.clear();
+    } else {
+      selectedKeyword = k;
+      keywordCtrl.text = k;
+    }
     _dismissKeyboard();
   }
 

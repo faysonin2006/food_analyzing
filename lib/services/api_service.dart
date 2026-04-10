@@ -69,7 +69,7 @@ class _RecipePageMeta {
 class ApiService {
   static const String baseUrl =
       'http://192.168.10'
-      '.210:8090';
+      '.92:8090';
   // static const String baseUrl =
   //     'http://172.20.10'
   //     '.7:8090';

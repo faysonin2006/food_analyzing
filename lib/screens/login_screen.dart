@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_feedback.dart';
 import '../core/app_theme.dart';
 import '../core/atelier_ui.dart';
 import '../core/settings_sheet.dart';
@@ -23,6 +24,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
 
   bool get _isRu => Localizations.localeOf(context).languageCode == 'ru';
+  String get _feedbackSource => _isRu ? 'Вход' : 'Login';
 
   void _dismissKeyboard() {
     FocusManager.instance.primaryFocus?.unfocus();
@@ -45,18 +47,28 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    ScaffoldMessenger.of(
+    showAppFeedback(
       context,
-    ).showSnackBar(SnackBar(content: Text(tr(context, 'login_error'))));
+      tr(context, 'login_error'),
+      kind: AppFeedbackKind.error,
+      source: _feedbackSource,
+      preferPopup: true,
+      addToInbox: false,
+    );
   }
 
   void _showUnavailableProviderMessage(String provider) {
     final message = _isRu
         ? '$provider вход пока не подключен'
         : '$provider sign in is not available yet';
-    ScaffoldMessenger.of(
+    showAppFeedback(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+      message,
+      kind: AppFeedbackKind.info,
+      source: _feedbackSource,
+      preferPopup: true,
+      addToInbox: false,
+    );
   }
 
   Widget _settingsButton(BuildContext context) {
@@ -369,13 +381,16 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                           const SizedBox(height: 28),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 4,
                             children: [
                               Text(
                                 _isRu
                                     ? 'Впервые в приложении?'
                                     : 'New to the atelier?',
+                                textAlign: TextAlign.center,
                                 style: theme.textTheme.bodyLarge?.copyWith(
                                   color: cs.onSurfaceVariant,
                                   fontWeight: FontWeight.w600,

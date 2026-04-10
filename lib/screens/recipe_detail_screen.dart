@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_feedback.dart';
 import '../core/app_theme.dart';
 import '../core/atelier_ui.dart';
 import '../core/tr.dart';
 import '../repositories/app_repository.dart';
+import '../services/api_service.dart';
 import '../features/likes/likes.dart';
 import 'recipe_models.dart';
 part "recipe_detail/recipe_detail_ui.dart";
@@ -85,8 +87,14 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   final AppRepository repository = AppRepository.instance;
   final likes = LikesService.instance;
   late final Future<RecipeDetails?> future;
+  final TextEditingController _commentController = TextEditingController();
+  final FocusNode _commentFocusNode = FocusNode();
+  final Set<int> _commentLikeBusyIds = <int>{};
+  RecipeDetails? _detailsOverride;
+  RecipeComment? _replyTarget;
   bool _likeBusy = false;
   bool _addingToShopping = false;
+  bool _submittingComment = false;
   bool _pantryMatchesReady = false;
   bool _profileRestrictionsReady = false;
   Set<String> _pantryNames = const {};
@@ -115,6 +123,8 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   @override
   void dispose() {
     likes.removeListener(_onLikesChanged);
+    _commentController.dispose();
+    _commentFocusNode.dispose();
     super.dispose();
   }
 
@@ -145,14 +155,198 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
       : Colors.black.withValues(alpha: 0.62);
 
   bool get _isRu => Localizations.localeOf(context).languageCode == 'ru';
+  String get _feedbackSource => _isRu ? 'Рецепт' : 'Recipe';
 
   void _safeSetState(VoidCallback fn) {
     if (!mounted) return;
     setState(fn);
   }
 
+  void _showFeedback(
+    String message, {
+    AppFeedbackKind? kind,
+    bool preferPopup = false,
+    bool addToInbox = true,
+  }) {
+    if (!mounted) return;
+    showAppFeedback(
+      context,
+      message,
+      kind: kind,
+      source: _feedbackSource,
+      preferPopup: preferPopup,
+      addToInbox: addToInbox,
+    );
+  }
+
   void _onLikesChanged() {
     _safeSetState(() {});
+  }
+
+  Future<void> _submitComment(RecipeDetails baseDetails) async {
+    final text = _commentController.text.trim();
+    if (text.isEmpty) {
+      _showFeedback(
+        _isRu ? 'Введите комментарий' : 'Enter a comment',
+        kind: AppFeedbackKind.error,
+        preferPopup: true,
+        addToInbox: false,
+      );
+      return;
+    }
+    if (_submittingComment) return;
+
+    _safeSetState(() => _submittingComment = true);
+    try {
+      final comment = await repository.addRecipeComment(
+        recipeId: widget.recipeId,
+        text: text,
+        parentCommentId: _replyTarget?.id,
+      );
+      if (!mounted) return;
+      final current = _detailsOverride ?? baseDetails;
+      _commentController.clear();
+      _commentFocusNode.unfocus();
+      _safeSetState(() {
+        _detailsOverride = current.copyWith(
+          comments: _appendCommentToTree(current.comments, comment),
+        );
+        _replyTarget = null;
+        _submittingComment = false;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      _safeSetState(() => _submittingComment = false);
+      final message = error.statusCode == 401
+          ? (_isRu
+                ? 'Войдите, чтобы оставить комментарий'
+                : 'Log in to leave a comment')
+          : error.message;
+      _showFeedback(
+        message,
+        kind: AppFeedbackKind.error,
+        preferPopup: true,
+        addToInbox: false,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      _safeSetState(() => _submittingComment = false);
+      _showFeedback(
+        _isRu ? 'Не удалось отправить комментарий' : 'Failed to post comment',
+        kind: AppFeedbackKind.error,
+        preferPopup: true,
+        addToInbox: false,
+      );
+    }
+  }
+
+  void _startReply(RecipeComment comment) {
+    _safeSetState(() => _replyTarget = comment);
+    _commentFocusNode.requestFocus();
+  }
+
+  void _cancelReply() {
+    _safeSetState(() => _replyTarget = null);
+  }
+
+  Future<void> _toggleCommentLike(
+    RecipeDetails baseDetails,
+    RecipeComment comment,
+  ) async {
+    if (_commentLikeBusyIds.contains(comment.id)) return;
+    _safeSetState(() => _commentLikeBusyIds.add(comment.id));
+    try {
+      final updated = await repository.setRecipeCommentLike(
+        recipeId: widget.recipeId,
+        commentId: comment.id,
+        liked: !comment.likedByMe,
+      );
+      if (!mounted) return;
+      final current = _detailsOverride ?? baseDetails;
+      _safeSetState(() {
+        _detailsOverride = current.copyWith(
+          comments: _updateCommentInTree(current.comments, updated),
+        );
+        _commentLikeBusyIds.remove(comment.id);
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      _safeSetState(() => _commentLikeBusyIds.remove(comment.id));
+      final message = error.statusCode == 401
+          ? (_isRu
+                ? 'Войдите, чтобы ставить лайки комментариям'
+                : 'Log in to like comments')
+          : error.message;
+      _showFeedback(
+        message,
+        kind: AppFeedbackKind.error,
+        preferPopup: true,
+        addToInbox: false,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      _safeSetState(() => _commentLikeBusyIds.remove(comment.id));
+      _showFeedback(
+        _isRu
+            ? 'Не удалось обновить лайк комментария'
+            : 'Failed to update comment like',
+        kind: AppFeedbackKind.error,
+        preferPopup: true,
+        addToInbox: false,
+      );
+    }
+  }
+
+  List<RecipeComment> _appendCommentToTree(
+    List<RecipeComment> comments,
+    RecipeComment newComment,
+  ) {
+    if (newComment.parentCommentId == null) {
+      return [
+        ...comments.where((item) => item.id != newComment.id),
+        newComment,
+      ];
+    }
+    return comments
+        .map((item) {
+          if (item.id != newComment.parentCommentId) {
+            return item;
+          }
+          final replies = [
+            ...item.replies.where((reply) => reply.id != newComment.id),
+            newComment,
+          ];
+          return item.copyWith(replies: replies, replyCount: replies.length);
+        })
+        .toList(growable: false);
+  }
+
+  List<RecipeComment> _updateCommentInTree(
+    List<RecipeComment> comments,
+    RecipeComment updatedComment,
+  ) {
+    return comments
+        .map((item) {
+          if (item.id == updatedComment.id) {
+            return item.copyWith(
+              parentCommentId: updatedComment.parentCommentId,
+              authorName: updatedComment.authorName,
+              body: updatedComment.body,
+              createdAt: updatedComment.createdAt,
+              likeCount: updatedComment.likeCount,
+              likedByMe: updatedComment.likedByMe,
+              replyCount: item.replies.isNotEmpty
+                  ? item.replies.length
+                  : updatedComment.replyCount,
+            );
+          }
+          if (item.replies.isEmpty) {
+            return item;
+          }
+          final replies = _updateCommentInTree(item.replies, updatedComment);
+          return item.copyWith(replies: replies, replyCount: replies.length);
+        })
+        .toList(growable: false);
   }
 
   Future<void> _loadPantryMatches() async {
@@ -677,14 +871,13 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     if (_addingToShopping) return;
     final missingIngredients = _missingIngredients(ingredients);
     if (missingIngredients.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _isRu
-                ? 'Все ингредиенты уже есть в кладовой'
-                : 'All ingredients are already in the pantry',
-          ),
-        ),
+      _showFeedback(
+        _isRu
+            ? 'Все ингредиенты уже есть в кладовой'
+            : 'All ingredients are already in the pantry',
+        kind: AppFeedbackKind.info,
+        preferPopup: true,
+        addToInbox: false,
       );
       return;
     }
@@ -713,14 +906,11 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     if (!mounted) return;
     _safeSetState(() => _addingToShopping = false);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _isRu
-              ? 'В shopping list добавлено: $addedCount'
-              : 'Added to shopping list: $addedCount',
-        ),
-      ),
+    _showFeedback(
+      _isRu
+          ? 'В shopping list добавлено: $addedCount'
+          : 'Added to shopping list: $addedCount',
+      kind: AppFeedbackKind.success,
     );
   }
 
@@ -1069,7 +1259,8 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
             ),
           );
         }
-        return _buildDetail(snap.data!);
+        final details = _detailsOverride ?? snap.data!;
+        return _buildDetail(details);
       },
     );
   }

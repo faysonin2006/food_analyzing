@@ -1,13 +1,10 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../core/app_theme.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
-import '../core/smart_food_suggestions.dart';
-import '../core/smart_suggestion_ml.dart';
-import '../core/smart_suggestion_panel.dart';
+import '../core/food_suggestions.dart';
+import '../core/suggestion_panel.dart';
 import '../repositories/app_repository.dart';
 
 class MealHistoryScreen extends StatefulWidget {
@@ -132,53 +129,21 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
     final fatsCtrl = TextEditingController();
     final carbsCtrl = TextEditingController();
     final notesCtrl = TextEditingController();
-    var mealSuggestions = const <SmartSuggestionOption>[];
-    Timer? suggestionDebounce;
-    var activeSuggestionRequestId = 0;
+    var mealSuggestions = const <SuggestionOption>[];
     DateTime eatenAt = DateTime.now();
 
     void refreshMealSuggestions(StateSetter setSheetState) {
       final query = titleCtrl.text;
-      final candidates = SmartFoodSuggestions.collectMealSuggestions(
+      final candidates = FoodSuggestions.collectMealSuggestions(
         isRu: _isRu,
         mealItems: _items,
       );
-      final local = SmartSuggestionMl.localVisibleSuggestions(
-        candidates: candidates,
+      final local = FoodSuggestions.rankSuggestions(
+        candidates,
         query: query,
         limit: 8,
       );
       setSheetState(() => mealSuggestions = local);
-
-      suggestionDebounce?.cancel();
-      final trimmedQuery = query.trim();
-      if (trimmedQuery.isEmpty || candidates.isEmpty) return;
-      final requestId = ++activeSuggestionRequestId;
-      suggestionDebounce = Timer(const Duration(milliseconds: 220), () async {
-        final ranked = await SmartSuggestionMl.rerankSuggestions(
-          query: trimmedQuery,
-          candidates: candidates,
-          visibleLimit: 8,
-          ranker:
-              ({
-                required String query,
-                required List<Map<String, dynamic>> candidates,
-                required int limit,
-              }) {
-                return repository.rerankSuggestionCandidateIds(
-                  query: query,
-                  candidates: candidates,
-                  limit: limit,
-                );
-              },
-        );
-        if (!mounted ||
-            requestId != activeSuggestionRequestId ||
-            titleCtrl.text.trim() != trimmedQuery) {
-          return;
-        }
-        setSheetState(() => mealSuggestions = ranked);
-      });
     }
 
     final created = await showModalBottomSheet<bool>(
@@ -206,11 +171,9 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
                       onTap: () => refreshMealSuggestions(setSheetState),
                       onChanged: (_) => refreshMealSuggestions(setSheetState),
                       onTapOutside: (_) {
-                        suggestionDebounce?.cancel();
-                        activeSuggestionRequestId++;
                         FocusScope.of(context).unfocus();
                         setSheetState(() {
-                          mealSuggestions = const <SmartSuggestionOption>[];
+                          mealSuggestions = const <SuggestionOption>[];
                         });
                       },
                       decoration: InputDecoration(
@@ -224,8 +187,6 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
                         suggestions: mealSuggestions,
                         isRu: _isRu,
                         onSelected: (option) {
-                          suggestionDebounce?.cancel();
-                          activeSuggestionRequestId++;
                           titleCtrl.text = option.primaryText;
                           titleCtrl.selection = TextSelection.collapsed(
                             offset: titleCtrl.text.length,
@@ -250,7 +211,7 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
                           }
                           FocusScope.of(context).unfocus();
                           setSheetState(() {
-                            mealSuggestions = const <SmartSuggestionOption>[];
+                            mealSuggestions = const <SuggestionOption>[];
                           });
                         },
                       ),
@@ -399,8 +360,6 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
         ),
       ),
     );
-
-    suggestionDebounce?.cancel();
 
     if (created == true) {
       await _load();

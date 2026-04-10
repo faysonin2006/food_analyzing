@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'smart_food_suggestions.dart';
+import 'food_suggestions.dart';
 
 class AtelierSuggestionPanel extends StatelessWidget {
   const AtelierSuggestionPanel({
@@ -10,8 +10,8 @@ class AtelierSuggestionPanel extends StatelessWidget {
     required this.isRu,
   });
 
-  final List<SmartSuggestionOption> suggestions;
-  final ValueChanged<SmartSuggestionOption> onSelected;
+  final List<SuggestionOption> suggestions;
+  final ValueChanged<SuggestionOption> onSelected;
   final bool isRu;
 
   @override
@@ -77,7 +77,7 @@ class _SuggestionTile extends StatelessWidget {
     required this.onTap,
   });
 
-  final SmartSuggestionOption option;
+  final SuggestionOption option;
   final bool isRu;
   final VoidCallback onTap;
 
@@ -156,33 +156,33 @@ class _SuggestionTile extends StatelessWidget {
     );
   }
 
-  IconData _iconFor(SmartSuggestionSource source) {
+  IconData _iconFor(SuggestionSource source) {
     return switch (source) {
-      SmartSuggestionSource.pantry => Icons.inventory_2_rounded,
-      SmartSuggestionSource.shopping => Icons.shopping_basket_rounded,
-      SmartSuggestionSource.history => Icons.history_rounded,
-      SmartSuggestionSource.keyword => Icons.flash_on_rounded,
-      SmartSuggestionSource.catalog => Icons.auto_awesome_rounded,
+      SuggestionSource.pantry => Icons.inventory_2_rounded,
+      SuggestionSource.shopping => Icons.shopping_basket_rounded,
+      SuggestionSource.history => Icons.history_rounded,
+      SuggestionSource.keyword => Icons.flash_on_rounded,
+      SuggestionSource.catalog => Icons.auto_awesome_rounded,
     };
   }
 
-  Color _accentColor(SmartSuggestionSource source, ColorScheme cs) {
+  Color _accentColor(SuggestionSource source, ColorScheme cs) {
     return switch (source) {
-      SmartSuggestionSource.pantry => const Color(0xFF1E8E5A),
-      SmartSuggestionSource.shopping => cs.secondary,
-      SmartSuggestionSource.history => cs.tertiary,
-      SmartSuggestionSource.keyword => const Color(0xFFE27A22),
-      SmartSuggestionSource.catalog => cs.primary,
+      SuggestionSource.pantry => const Color(0xFF1E8E5A),
+      SuggestionSource.shopping => cs.secondary,
+      SuggestionSource.history => cs.tertiary,
+      SuggestionSource.keyword => const Color(0xFFE27A22),
+      SuggestionSource.catalog => cs.primary,
     };
   }
 
-  String _sourceLabel(SmartSuggestionSource source, {required bool isRu}) {
+  String _sourceLabel(SuggestionSource source, {required bool isRu}) {
     return switch (source) {
-      SmartSuggestionSource.pantry => isRu ? 'Кладовая' : 'Pantry',
-      SmartSuggestionSource.shopping => isRu ? 'Список' : 'Shopping',
-      SmartSuggestionSource.history => isRu ? 'История' : 'History',
-      SmartSuggestionSource.keyword => isRu ? 'Быстро' : 'Quick',
-      SmartSuggestionSource.catalog => isRu ? 'Каталог' : 'Catalog',
+      SuggestionSource.pantry => isRu ? 'Кладовая' : 'Pantry',
+      SuggestionSource.shopping => isRu ? 'Список' : 'Shopping',
+      SuggestionSource.history => isRu ? 'История' : 'History',
+      SuggestionSource.keyword => isRu ? 'Быстро' : 'Quick',
+      SuggestionSource.catalog => isRu ? 'Каталог' : 'Catalog',
     };
   }
 }

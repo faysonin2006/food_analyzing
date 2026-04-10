@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/app_feedback.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
 import '../core/app_scope.dart';
@@ -78,6 +79,25 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     'sugar_level',
     'salt_level',
   ];
+
+  String get _feedbackSource => _isRu ? 'Анализ' : 'Analyze';
+
+  void _showFeedback(
+    String message, {
+    AppFeedbackKind? kind,
+    bool preferPopup = false,
+    bool addToInbox = true,
+  }) {
+    if (!mounted) return;
+    showAppFeedback(
+      context,
+      message,
+      kind: kind,
+      source: _feedbackSource,
+      preferPopup: preferPopup,
+      addToInbox: addToInbox,
+    );
+  }
 
   static const List<_QuestionPreset> _questionPresets = [
     _QuestionPreset(
@@ -231,10 +251,11 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     if (selected) {
       if (_selectedQuestionIds.contains(id)) return;
       if (_selectedQuestionIds.length >= _maxSelectedQuestions) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(tr(context, 'analysis_questions_limit_error')),
-          ),
+        _showFeedback(
+          tr(context, 'analysis_questions_limit_error'),
+          kind: AppFeedbackKind.error,
+          preferPopup: true,
+          addToInbox: false,
         );
         return;
       }
@@ -646,8 +667,9 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     if (!mounted) return;
 
     if (analysisId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr(context, 'history_item_deleted'))),
+      _showFeedback(
+        tr(context, 'history_item_deleted'),
+        kind: AppFeedbackKind.success,
       );
       return;
     }
@@ -655,15 +677,17 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     final deleted = await repository.deleteAnalysisHistoryItem(analysisId);
     if (!mounted) return;
     if (deleted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(tr(context, 'history_item_deleted'))),
+      _showFeedback(
+        tr(context, 'history_item_deleted'),
+        kind: AppFeedbackKind.success,
       );
       await _loadAnalysisHistory(showLoader: false);
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(tr(context, 'history_item_delete_pending'))),
+    _showFeedback(
+      tr(context, 'history_item_delete_pending'),
+      kind: AppFeedbackKind.info,
     );
   }
 
@@ -724,8 +748,11 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
 
     if (!status.isGranted) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr(context, 'permission_denied'))),
+        _showFeedback(
+          tr(context, 'permission_denied'),
+          kind: AppFeedbackKind.error,
+          preferPopup: true,
+          addToInbox: false,
         );
       }
       return null;
@@ -802,14 +829,9 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
           if (!mounted) return;
 
           final cal = _historyCalories(historyItem)?.round().toString() ?? '-';
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '${result['dish_name']} | $cal ${tr(context, 'kcal')}',
-              ),
-              backgroundColor: _cs.secondary,
-              duration: const Duration(seconds: 3),
-            ),
+          _showFeedback(
+            '${result['dish_name']} | $cal ${tr(context, 'kcal')}',
+            kind: AppFeedbackKind.success,
           );
           return;
         }
@@ -818,12 +840,10 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
           await _upsertHistoryItem(historyItem);
           if (mounted) {
             final message = _analysisErrorMessage(result);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  message.isEmpty ? tr(context, 'analysis_failed') : message,
-                ),
-              ),
+            _showFeedback(
+              message.isEmpty ? tr(context, 'analysis_failed') : message,
+              kind: AppFeedbackKind.error,
+              preferPopup: true,
             );
           }
           await _loadAnalysisHistory(showLoader: false);
@@ -835,11 +855,10 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     }
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(tr(context, 'analysis_timeout')),
-          backgroundColor: _cs.tertiary,
-        ),
+      _showFeedback(
+        tr(context, 'analysis_timeout'),
+        kind: AppFeedbackKind.error,
+        preferPopup: true,
       );
     }
   }
@@ -1048,16 +1067,12 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
       await _applySavedMealState(analysis, saved);
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          saved != null
-              ? (_isRu ? 'Прием пищи сохранен' : 'Meal saved')
-              : (_isRu
-                    ? 'Не удалось сохранить прием пищи'
-                    : 'Failed to save meal'),
-        ),
-      ),
+    _showFeedback(
+      saved != null
+          ? (_isRu ? 'Прием пищи сохранен' : 'Meal saved')
+          : (_isRu ? 'Не удалось сохранить прием пищи' : 'Failed to save meal'),
+      kind: saved != null ? AppFeedbackKind.success : AppFeedbackKind.error,
+      preferPopup: saved == null,
     );
   }
 

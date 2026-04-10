@@ -1,11 +1,11 @@
 import '../local/search_history_local_db.dart';
 
-part 'smart_food_catalog_data.dart';
+part 'food_catalog_data.dart';
 
-enum SmartSuggestionSource { pantry, shopping, history, keyword, catalog }
+enum SuggestionSource { pantry, shopping, history, keyword, catalog }
 
-class SmartSuggestionOption {
-  const SmartSuggestionOption({
+class SuggestionOption {
+  const SuggestionOption({
     required this.primaryText,
     required this.source,
     this.secondaryText,
@@ -23,7 +23,7 @@ class SmartSuggestionOption {
 
   final String primaryText;
   final String? secondaryText;
-  final SmartSuggestionSource source;
+  final SuggestionSource source;
   final String? category;
   final String? brand;
   final String? pantryUnit;
@@ -34,28 +34,10 @@ class SmartSuggestionOption {
   final double? fat;
   final double? carbs;
   final List<String> searchTerms;
-
-  Map<String, dynamic> toMlPayload(String id) {
-    return <String, dynamic>{
-      'id': id,
-      'primaryText': primaryText,
-      if ((secondaryText ?? '').trim().isNotEmpty)
-        'secondaryText': secondaryText,
-      if ((category ?? '').trim().isNotEmpty) 'category': category,
-      if ((brand ?? '').trim().isNotEmpty) 'brand': brand,
-      'searchTerms': <String>[
-        primaryText,
-        if ((secondaryText ?? '').trim().isNotEmpty) secondaryText!,
-        if ((category ?? '').trim().isNotEmpty) category!,
-        if ((brand ?? '').trim().isNotEmpty) brand!,
-        ...searchTerms,
-      ],
-    };
-  }
 }
 
-class SmartFoodSuggestions {
-  SmartFoodSuggestions._();
+class FoodSuggestions {
+  FoodSuggestions._();
 
   static Iterable<_CatalogFoodEntry> get _catalogEntries => <_CatalogFoodEntry>[
     ..._catalog,
@@ -516,16 +498,16 @@ class SmartFoodSuggestions {
     ),
   ];
 
-  static List<SmartSuggestionOption> collectProductSuggestions({
+  static List<SuggestionOption> collectProductSuggestions({
     required bool isRu,
     Iterable<Map<String, dynamic>> pantryItems = const <Map<String, dynamic>>[],
     Iterable<Map<String, dynamic>> shoppingItems =
         const <Map<String, dynamic>>[],
   }) {
-    final suggestions = <SmartSuggestionOption>[];
+    final suggestions = <SuggestionOption>[];
     final seen = <String>{};
 
-    void addSuggestion(SmartSuggestionOption option) {
+    void addSuggestion(SuggestionOption option) {
       final key = _normalize(option.primaryText);
       if (key.isEmpty || !seen.add(key)) return;
       suggestions.add(option);
@@ -538,12 +520,12 @@ class SmartFoodSuggestions {
       final category = item['category']?.toString().trim();
       final pantryUnit = _normalizePantryUnit(item['unit']?.toString());
       addSuggestion(
-        SmartSuggestionOption(
+        SuggestionOption(
           primaryText: name,
-          source: SmartSuggestionSource.pantry,
+          source: SuggestionSource.pantry,
           secondaryText: _composeProductSecondary(
             isRu: isRu,
-            source: SmartSuggestionSource.pantry,
+            source: SuggestionSource.pantry,
             category: category,
             brand: brand,
           ),
@@ -569,12 +551,12 @@ class SmartFoodSuggestions {
       if (name.isEmpty) continue;
       final unit = item['unit']?.toString().trim();
       addSuggestion(
-        SmartSuggestionOption(
+        SuggestionOption(
           primaryText: name,
-          source: SmartSuggestionSource.shopping,
+          source: SuggestionSource.shopping,
           secondaryText: _composeProductSecondary(
             isRu: isRu,
-            source: SmartSuggestionSource.shopping,
+            source: SuggestionSource.shopping,
             category: unit,
           ),
           shoppingUnit: unit,
@@ -587,12 +569,12 @@ class SmartFoodSuggestions {
     for (final entry in _catalogEntries) {
       final label = entry.label(isRu: isRu);
       addSuggestion(
-        SmartSuggestionOption(
+        SuggestionOption(
           primaryText: label,
-          source: SmartSuggestionSource.catalog,
+          source: SuggestionSource.catalog,
           secondaryText: _composeProductSecondary(
             isRu: isRu,
-            source: SmartSuggestionSource.catalog,
+            source: SuggestionSource.catalog,
             category: entry.category(isRu: isRu),
           ),
           category: entry.category(isRu: isRu),
@@ -608,7 +590,7 @@ class SmartFoodSuggestions {
     return suggestions;
   }
 
-  static List<SmartSuggestionOption> buildProductSuggestions({
+  static List<SuggestionOption> buildProductSuggestions({
     required String query,
     required bool isRu,
     Iterable<Map<String, dynamic>> pantryItems = const <Map<String, dynamic>>[],
@@ -627,23 +609,23 @@ class SmartFoodSuggestions {
     );
   }
 
-  static List<SmartSuggestionOption> collectCategorySuggestions({
+  static List<SuggestionOption> collectCategorySuggestions({
     required bool isRu,
     Iterable<Map<String, dynamic>> pantryItems = const <Map<String, dynamic>>[],
   }) {
-    final suggestions = <SmartSuggestionOption>[];
+    final suggestions = <SuggestionOption>[];
     final seen = <String>{};
 
-    void addCategory(String value, SmartSuggestionSource source) {
+    void addCategory(String value, SuggestionSource source) {
       final category = value.trim();
       if (category.isEmpty) return;
       final key = _normalize(category);
       if (!seen.add(key)) return;
       suggestions.add(
-        SmartSuggestionOption(
+        SuggestionOption(
           primaryText: category,
           source: source,
-          secondaryText: source == SmartSuggestionSource.catalog
+          secondaryText: source == SuggestionSource.catalog
               ? (isRu ? 'Категория из каталога' : 'Catalog category')
               : (isRu ? 'Категория из вашей кладовой' : 'From your pantry'),
           searchTerms: <String>[category],
@@ -652,19 +634,16 @@ class SmartFoodSuggestions {
     }
 
     for (final item in pantryItems) {
-      addCategory(
-        item['category']?.toString() ?? '',
-        SmartSuggestionSource.pantry,
-      );
+      addCategory(item['category']?.toString() ?? '', SuggestionSource.pantry);
     }
     for (final entry in _catalogEntries) {
-      addCategory(entry.category(isRu: isRu), SmartSuggestionSource.catalog);
+      addCategory(entry.category(isRu: isRu), SuggestionSource.catalog);
     }
 
     return suggestions;
   }
 
-  static List<SmartSuggestionOption> buildCategorySuggestions({
+  static List<SuggestionOption> buildCategorySuggestions({
     required String query,
     required bool isRu,
     Iterable<Map<String, dynamic>> pantryItems = const <Map<String, dynamic>>[],
@@ -677,15 +656,15 @@ class SmartFoodSuggestions {
     );
   }
 
-  static List<SmartSuggestionOption> collectRecipeSuggestions({
+  static List<SuggestionOption> collectRecipeSuggestions({
     required bool isRu,
     Iterable<SearchHistoryEntry> history = const <SearchHistoryEntry>[],
     Iterable<String> keywords = const <String>[],
   }) {
-    final suggestions = <SmartSuggestionOption>[];
+    final suggestions = <SuggestionOption>[];
     final seen = <String>{};
 
-    void addSuggestion(SmartSuggestionOption option) {
+    void addSuggestion(SuggestionOption option) {
       final key = _normalize(option.primaryText);
       if (key.isEmpty || !seen.add(key)) return;
       suggestions.add(option);
@@ -695,9 +674,9 @@ class SmartFoodSuggestions {
       final value = entry.displayText.trim();
       if (value.isEmpty) continue;
       addSuggestion(
-        SmartSuggestionOption(
+        SuggestionOption(
           primaryText: value,
-          source: SmartSuggestionSource.history,
+          source: SuggestionSource.history,
           secondaryText: isRu ? 'Из истории поиска' : 'From search history',
           searchTerms: <String>[
             value,
@@ -713,9 +692,9 @@ class SmartFoodSuggestions {
       final value = keyword.trim();
       if (value.isEmpty) continue;
       addSuggestion(
-        SmartSuggestionOption(
+        SuggestionOption(
           primaryText: value,
-          source: SmartSuggestionSource.keyword,
+          source: SuggestionSource.keyword,
           secondaryText: isRu ? 'Быстрый вариант' : 'Quick pick',
           searchTerms: <String>[value],
         ),
@@ -725,9 +704,9 @@ class SmartFoodSuggestions {
     for (final prompt in _recipePromptEntries) {
       final label = prompt.label(isRu: isRu);
       addSuggestion(
-        SmartSuggestionOption(
+        SuggestionOption(
           primaryText: label,
-          source: SmartSuggestionSource.catalog,
+          source: SuggestionSource.catalog,
           secondaryText: isRu ? 'Идея для рецепта' : 'Recipe idea',
           searchTerms: prompt.searchTerms,
         ),
@@ -737,9 +716,9 @@ class SmartFoodSuggestions {
     for (final entry in _catalogEntries) {
       final label = entry.label(isRu: isRu);
       addSuggestion(
-        SmartSuggestionOption(
+        SuggestionOption(
           primaryText: label,
-          source: SmartSuggestionSource.catalog,
+          source: SuggestionSource.catalog,
           secondaryText: isRu ? 'Ингредиент' : 'Ingredient',
           searchTerms: entry.searchTerms,
         ),
@@ -749,7 +728,7 @@ class SmartFoodSuggestions {
     return suggestions;
   }
 
-  static List<SmartSuggestionOption> buildRecipeSuggestions({
+  static List<SuggestionOption> buildRecipeSuggestions({
     required String query,
     required bool isRu,
     Iterable<SearchHistoryEntry> history = const <SearchHistoryEntry>[],
@@ -767,14 +746,14 @@ class SmartFoodSuggestions {
     );
   }
 
-  static List<SmartSuggestionOption> collectMealSuggestions({
+  static List<SuggestionOption> collectMealSuggestions({
     required bool isRu,
     Iterable<Map<String, dynamic>> mealItems = const <Map<String, dynamic>>[],
   }) {
-    final suggestions = <SmartSuggestionOption>[];
+    final suggestions = <SuggestionOption>[];
     final seen = <String>{};
 
-    void addSuggestion(SmartSuggestionOption option) {
+    void addSuggestion(SuggestionOption option) {
       final key = _normalize(option.primaryText);
       if (key.isEmpty || !seen.add(key)) return;
       suggestions.add(option);
@@ -791,12 +770,12 @@ class SmartFoodSuggestions {
       );
       final notes = item['notes']?.toString().trim();
       addSuggestion(
-        SmartSuggestionOption(
+        SuggestionOption(
           primaryText: title,
-          source: SmartSuggestionSource.history,
+          source: SuggestionSource.history,
           secondaryText: _composeMealSecondary(
             isRu: isRu,
-            source: SmartSuggestionSource.history,
+            source: SuggestionSource.history,
             calories: calories,
             protein: protein,
             fat: fat,
@@ -816,12 +795,12 @@ class SmartFoodSuggestions {
 
     for (final prompt in _mealPromptEntries) {
       addSuggestion(
-        SmartSuggestionOption(
+        SuggestionOption(
           primaryText: prompt.label(isRu: isRu),
-          source: SmartSuggestionSource.catalog,
+          source: SuggestionSource.catalog,
           secondaryText: _composeMealSecondary(
             isRu: isRu,
-            source: SmartSuggestionSource.catalog,
+            source: SuggestionSource.catalog,
             calories: prompt.calories,
             protein: prompt.protein,
             fat: prompt.fat,
@@ -839,7 +818,7 @@ class SmartFoodSuggestions {
     return suggestions;
   }
 
-  static List<SmartSuggestionOption> buildMealSuggestions({
+  static List<SuggestionOption> buildMealSuggestions({
     required String query,
     required bool isRu,
     Iterable<Map<String, dynamic>> mealItems = const <Map<String, dynamic>>[],
@@ -852,13 +831,13 @@ class SmartFoodSuggestions {
     );
   }
 
-  static List<SmartSuggestionOption> rankSuggestions(
-    List<SmartSuggestionOption> suggestions, {
+  static List<SuggestionOption> rankSuggestions(
+    List<SuggestionOption> suggestions, {
     required String query,
     required int limit,
   }) {
     final normalizedQuery = _normalize(query);
-    if (suggestions.isEmpty) return const <SmartSuggestionOption>[];
+    if (suggestions.isEmpty) return const <SuggestionOption>[];
     if (normalizedQuery.isEmpty) {
       return suggestions.take(limit).toList();
     }
@@ -886,16 +865,13 @@ class SmartFoodSuggestions {
     return ranked.take(limit).map((entry) => entry.option).toList();
   }
 
-  static int _scoreSuggestion(
-    SmartSuggestionOption option,
-    String normalizedQuery,
-  ) {
+  static int _scoreSuggestion(SuggestionOption option, String normalizedQuery) {
     final sourceWeight = switch (option.source) {
-      SmartSuggestionSource.pantry => 220,
-      SmartSuggestionSource.shopping => 205,
-      SmartSuggestionSource.history => 200,
-      SmartSuggestionSource.keyword => 190,
-      SmartSuggestionSource.catalog => 170,
+      SuggestionSource.pantry => 220,
+      SuggestionSource.shopping => 205,
+      SuggestionSource.history => 200,
+      SuggestionSource.keyword => 190,
+      SuggestionSource.catalog => 170,
     };
 
     if (normalizedQuery.isEmpty) {
@@ -1029,19 +1005,18 @@ class SmartFoodSuggestions {
 
   static String _composeProductSecondary({
     required bool isRu,
-    required SmartSuggestionSource source,
+    required SuggestionSource source,
     String? category,
     String? brand,
   }) {
     final parts = <String>[
       switch (source) {
-        SmartSuggestionSource.pantry => isRu ? 'Из кладовой' : 'From pantry',
-        SmartSuggestionSource.shopping =>
+        SuggestionSource.pantry => isRu ? 'Из кладовой' : 'From pantry',
+        SuggestionSource.shopping =>
           isRu ? 'Из списка покупок' : 'From shopping list',
-        SmartSuggestionSource.history => isRu ? 'Из истории' : 'From history',
-        SmartSuggestionSource.keyword =>
-          isRu ? 'Быстрый вариант' : 'Quick pick',
-        SmartSuggestionSource.catalog => isRu ? 'Каталог' : 'Catalog',
+        SuggestionSource.history => isRu ? 'Из истории' : 'From history',
+        SuggestionSource.keyword => isRu ? 'Быстрый вариант' : 'Quick pick',
+        SuggestionSource.catalog => isRu ? 'Каталог' : 'Catalog',
       },
     ];
     if ((category ?? '').trim().isNotEmpty) {
@@ -1055,7 +1030,7 @@ class SmartFoodSuggestions {
 
   static String _composeMealSecondary({
     required bool isRu,
-    required SmartSuggestionSource source,
+    required SuggestionSource source,
     int? calories,
     double? protein,
     double? fat,
@@ -1063,14 +1038,13 @@ class SmartFoodSuggestions {
   }) {
     final parts = <String>[
       switch (source) {
-        SmartSuggestionSource.pantry => isRu ? 'Из кладовой' : 'From pantry',
-        SmartSuggestionSource.shopping =>
+        SuggestionSource.pantry => isRu ? 'Из кладовой' : 'From pantry',
+        SuggestionSource.shopping =>
           isRu ? 'Из списка покупок' : 'From shopping list',
-        SmartSuggestionSource.history =>
+        SuggestionSource.history =>
           isRu ? 'Из истории приёмов пищи' : 'From meal history',
-        SmartSuggestionSource.keyword =>
-          isRu ? 'Быстрый вариант' : 'Quick pick',
-        SmartSuggestionSource.catalog =>
+        SuggestionSource.keyword => isRu ? 'Быстрый вариант' : 'Quick pick',
+        SuggestionSource.catalog =>
           isRu ? 'Каталог приёмов пищи' : 'Meal catalog',
       },
     ];
@@ -1266,6 +1240,6 @@ class _MealPromptEntry {
 class _RankedSuggestion {
   const _RankedSuggestion({required this.option, required this.score});
 
-  final SmartSuggestionOption option;
+  final SuggestionOption option;
   final int score;
 }

@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../core/app_feedback.dart';
+import '../core/live_refresh.dart';
 import '../core/app_theme.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
@@ -14,17 +18,21 @@ class HouseholdScreen extends StatefulWidget {
   State<HouseholdScreen> createState() => _HouseholdScreenState();
 }
 
-class _HouseholdScreenState extends State<HouseholdScreen> {
+class _HouseholdScreenState extends State<HouseholdScreen>
+    with LiveRefreshState<HouseholdScreen> {
   final AppRepository repository = AppRepository.instance;
 
   bool _loading = true;
+  bool _isFetching = false;
   bool _didScheduleInitialLoad = false;
   List<Map<String, dynamic>> _households = const [];
   List<Map<String, dynamic>> _invitations = const [];
+  String _lastSnapshotSignature = '';
 
   bool get _isRu => Localizations.localeOf(context).languageCode == 'ru';
   ThemeData get _theme => Theme.of(context);
   ColorScheme get _cs => _theme.colorScheme;
+  String get _screenTitle => _isRu ? 'Семья' : 'Household';
 
   String _errorText(Object error, String fallback) {
     if (error is ApiException) return error.message;
@@ -33,11 +41,21 @@ class _HouseholdScreenState extends State<HouseholdScreen> {
     return text.startsWith('Exception: ') ? text.substring(11) : text;
   }
 
-  void _showMessage(String message) {
+  void _showMessage(
+    String message, {
+    AppFeedbackKind? kind,
+    bool preferPopup = false,
+    bool addToInbox = true,
+  }) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
+    showAppFeedback(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+      message,
+      kind: kind,
+      source: _screenTitle,
+      preferPopup: preferPopup,
+      addToInbox: addToInbox,
+    );
   }
 
   Future<T> _loadWithFallback<T>({
@@ -63,9 +81,13 @@ class _HouseholdScreenState extends State<HouseholdScreen> {
   }
 
   @override
-  void initState() {
-    super.initState();
-  }
+  Duration get liveRefreshInterval => const Duration(seconds: 8);
+
+  @override
+  bool get enableLiveRefresh => ModalRoute.of(context)?.isCurrent ?? true;
+
+  @override
+  Future<void> performLiveRefresh() => _load(silent: true);
 
   @override
   void didChangeDependencies() {
@@ -78,36 +100,54 @@ class _HouseholdScreenState extends State<HouseholdScreen> {
     });
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  Future<void> _load({bool silent = false}) async {
+    if (_isFetching) return;
+    _isFetching = true;
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     final errors = <String>[];
-    final householdsFuture = _loadWithFallback<List<Map<String, dynamic>>>(
-      future: repository.getHouseholds(),
-      fallback: _households,
-      errors: errors,
-      fallbackMessage: _isRu
-          ? 'Не удалось загрузить семьи'
-          : 'Failed to load households',
-    );
-    final invitationsFuture = _loadWithFallback<List<Map<String, dynamic>>>(
-      future: repository.getMyHouseholdInvitations(),
-      fallback: _invitations,
-      errors: errors,
-      fallbackMessage: _isRu
-          ? 'Не удалось загрузить приглашения'
-          : 'Failed to load invitations',
-    );
+    try {
+      final householdsFuture = _loadWithFallback<List<Map<String, dynamic>>>(
+        future: repository.getHouseholds(),
+        fallback: _households,
+        errors: errors,
+        fallbackMessage: _isRu
+            ? 'Не удалось загрузить семьи'
+            : 'Failed to load households',
+      );
+      final invitationsFuture = _loadWithFallback<List<Map<String, dynamic>>>(
+        future: repository.getMyHouseholdInvitations(),
+        fallback: _invitations,
+        errors: errors,
+        fallbackMessage: _isRu
+            ? 'Не удалось загрузить приглашения'
+            : 'Failed to load invitations',
+      );
 
-    final households = await householdsFuture;
-    final invitations = await invitationsFuture;
+      final households = await householdsFuture;
+      final invitations = await invitationsFuture;
+      final nextSignature = liveRefreshSignature(<String, Object?>{
+        'households': households,
+        'invitations': invitations,
+      });
 
-    if (!mounted) return;
-    setState(() {
-      _households = households;
-      _invitations = invitations;
-      _loading = false;
-    });
-    _showLoadWarnings(errors);
+      if (!mounted) return;
+      final hasChanged = nextSignature != _lastSnapshotSignature;
+      if (hasChanged || !silent || _loading) {
+        setState(() {
+          _households = households;
+          _invitations = invitations;
+          _loading = false;
+        });
+      }
+      _lastSnapshotSignature = nextSignature;
+      if (!silent) {
+        _showLoadWarnings(errors);
+      }
+    } finally {
+      _isFetching = false;
+    }
   }
 
   Future<void> _createHousehold() async {
@@ -147,14 +187,15 @@ class _HouseholdScreenState extends State<HouseholdScreen> {
                     onPressed: () async {
                       final name = ctrl.text.trim();
                       if (name.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              _isRu
-                                  ? 'Введи название семьи'
-                                  : 'Enter a household name',
-                            ),
-                          ),
+                        showAppFeedback(
+                          context,
+                          _isRu
+                              ? 'Введи название семьи'
+                              : 'Enter a household name',
+                          kind: AppFeedbackKind.error,
+                          source: _screenTitle,
+                          preferPopup: true,
+                          addToInbox: false,
                         );
                         return;
                       }
@@ -165,17 +206,17 @@ class _HouseholdScreenState extends State<HouseholdScreen> {
                         Navigator.of(context).pop(result != null);
                       } catch (error) {
                         if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              _errorText(
-                                error,
-                                _isRu
-                                    ? 'Не удалось создать семью'
-                                    : 'Failed to create household',
-                              ),
-                            ),
+                        showAppFeedback(
+                          context,
+                          _errorText(
+                            error,
+                            _isRu
+                                ? 'Не удалось создать семью'
+                                : 'Failed to create household',
                           ),
+                          kind: AppFeedbackKind.error,
+                          source: _screenTitle,
+                          preferPopup: true,
                         );
                       }
                     },
@@ -380,14 +421,18 @@ class _HouseholdScreenState extends State<HouseholdScreen> {
                   (household) => Padding(
                     padding: const EdgeInsets.only(bottom: 12),
                     child: InkWell(
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => HouseholdDetailScreen(
-                            householdId: household['id'].toString(),
-                            initialName: household['name']?.toString() ?? '',
+                      onTap: () async {
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => HouseholdDetailScreen(
+                              householdId: household['id'].toString(),
+                              initialName: household['name']?.toString() ?? '',
+                            ),
                           ),
-                        ),
-                      ),
+                        );
+                        if (!mounted) return;
+                        await _load(silent: true);
+                      },
                       borderRadius: BorderRadius.circular(24),
                       child: AtelierSurfaceCard(
                         radius: 24,

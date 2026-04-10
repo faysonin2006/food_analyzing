@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_feedback.dart';
 import '../core/app_theme.dart';
 import '../core/atelier_ui.dart';
 import '../core/settings_sheet.dart';
@@ -23,6 +24,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _acceptedTerms = false;
 
   bool get _isRu => Localizations.localeOf(context).languageCode == 'ru';
+  String get _feedbackSource => _isRu ? 'Регистрация' : 'Register';
 
   void _dismissKeyboard() {
     FocusManager.instance.primaryFocus?.unfocus();
@@ -33,7 +35,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final text = _isRu
           ? 'Подтверди условия перед регистрацией'
           : 'Accept the terms before continuing';
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+      showAppFeedback(
+        context,
+        text,
+        kind: AppFeedbackKind.error,
+        source: _feedbackSource,
+        preferPopup: true,
+        addToInbox: false,
+      );
       return;
     }
 
@@ -50,16 +59,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isLoading = false);
 
     if (success) {
-      ScaffoldMessenger.of(
+      showAppFeedback(
         context,
-      ).showSnackBar(SnackBar(content: Text(tr(context, 'register_success'))));
+        tr(context, 'register_success'),
+        kind: AppFeedbackKind.success,
+        source: _feedbackSource,
+      );
       Navigator.pop(context);
       return;
     }
 
-    ScaffoldMessenger.of(
+    showAppFeedback(
       context,
-    ).showSnackBar(SnackBar(content: Text(tr(context, 'register_error'))));
+      tr(context, 'register_error'),
+      kind: AppFeedbackKind.error,
+      source: _feedbackSource,
+      preferPopup: true,
+      addToInbox: false,
+    );
   }
 
   Widget _socialButton({
@@ -93,9 +110,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final message = _isRu
         ? '$provider регистрация пока не подключена'
         : '$provider sign up is not available yet';
-    ScaffoldMessenger.of(
+    showAppFeedback(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+      message,
+      kind: AppFeedbackKind.info,
+      source: _feedbackSource,
+      preferPopup: true,
+      addToInbox: false,
+    );
   }
 
   void _goBack() {

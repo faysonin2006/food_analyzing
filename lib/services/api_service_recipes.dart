@@ -99,50 +99,79 @@ extension ApiServiceRecipesMethods on ApiService {
     }
   }
 
-  Future<List<String>> rerankSuggestionCandidateIds({
-    required String query,
-    required List<Map<String, dynamic>> candidates,
-    int limit = 8,
+  Future<RecipeComment> addRecipeComment({
+    required int recipeId,
+    required String text,
+    int? parentCommentId,
   }) async {
-    final normalizedQuery = query.trim();
-    if (normalizedQuery.isEmpty || candidates.isEmpty) {
-      return const <String>[];
+    final trimmedText = text.trim();
+    if (trimmedText.isEmpty) {
+      throw const ApiException(message: 'Comment text must not be empty');
     }
-
     if (!NetworkMonitor.instance.isOnline) {
-      return const <String>[];
-    }
-
-    final payload = <String, dynamic>{
-      'query': normalizedQuery,
-      'limit': limit,
-      'candidates': candidates,
-    };
-
-    try {
-      final url = Uri.parse(
-        '${ApiService.baseUrl}/api/recipes/db/suggestions/rerank',
+      throw const ApiException(
+        message: 'Connect to the internet to post a comment',
       );
-      final response = await _postWithAuth(url, body: jsonEncode(payload));
-      if (response.statusCode != 200) {
-        return const <String>[];
-      }
-
-      final decoded = jsonDecode(response.body);
-      final items = decoded is Map<String, dynamic> ? decoded['items'] : null;
-      if (items is! List) {
-        return const <String>[];
-      }
-
-      return items
-          .whereType<Map>()
-          .map((entry) => entry['id']?.toString() ?? '')
-          .where((id) => id.isNotEmpty)
-          .toList(growable: false);
-    } catch (error) {
-      print('rerankSuggestionCandidateIds error: $error');
-      return const <String>[];
     }
+
+    final url = Uri.parse(
+      '${ApiService.baseUrl}/api/recipes/db/$recipeId/comments',
+    );
+    final response = _ensureSuccess(
+      await _postWithAuth(
+        url,
+        body: jsonEncode({
+          'text': trimmedText,
+          if (parentCommentId != null) 'parentCommentId': parentCommentId,
+        }),
+      ),
+      fallbackMessage: 'Failed to post comment',
+      successCodes: const {200, 201},
+    );
+    final decoded = _decodeJsonBody(response.body);
+    final map = _asMap(decoded);
+    if (map == null) {
+      throw const ApiException(message: 'Failed to parse posted comment');
+    }
+
+    final comment = RecipeComment.fromDynamic(map);
+    await _appendRecipeCommentToCache(recipeId, comment);
+    return comment;
+  }
+
+  Future<RecipeComment> setRecipeCommentLike({
+    required int recipeId,
+    required int commentId,
+    required bool liked,
+  }) async {
+    if (!NetworkMonitor.instance.isOnline) {
+      throw const ApiException(
+        message: 'Connect to the internet to update comment like',
+      );
+    }
+
+    final url = Uri.parse(
+      '${ApiService.baseUrl}/api/recipes/db/comments/$commentId/like',
+    );
+    final response = liked
+        ? _ensureSuccess(
+            await _postWithAuth(url),
+            fallbackMessage: 'Failed to like comment',
+          )
+        : _ensureSuccess(
+            await _deleteWithAuth(url),
+            fallbackMessage: 'Failed to unlike comment',
+          );
+
+    final decoded = _decodeJsonBody(response.body);
+    final map = _asMap(decoded);
+    if (map == null) {
+      throw const ApiException(message: 'Failed to parse updated comment');
+    }
+
+    final comment = RecipeComment.fromDynamic(map);
+    await _updateRecipeCommentInCache(recipeId, comment);
+    return comment;
   }
 
   RecipeDetails _mergeSeedIntoDetails(RecipeDetails base, RecipeSummary? seed) {
@@ -217,9 +246,121 @@ extension ApiServiceRecipesMethods on ApiService {
     return out;
   }
 
-  String _normalizeLangForBackend(String lang) {
-    final v = lang.trim().toUpperCase();
-    return v == 'RU' ? 'RU' : 'EN';
+  Future<void> _appendRecipeCommentToCache(
+    int recipeId,
+    RecipeComment comment,
+  ) async {
+    final cacheKey = '${ApiService._kCacheRecipeDetailsPrefix}$recipeId';
+    final cached = await _readCacheMap(cacheKey);
+    if (cached == null) return;
+
+    final comments = _asMapList(cached['comments'])
+        .map((item) => RecipeComment.fromDynamic(item))
+        .where((item) => item.body.trim().isNotEmpty)
+        .toList(growable: true);
+    cached['comments'] = _appendCommentToTree(
+      comments,
+      comment,
+    ).map((item) => item.toJson()).toList();
+    await _writeCacheJson(cacheKey, cached);
+  }
+
+  Future<void> _updateRecipeCommentInCache(
+    int recipeId,
+    RecipeComment updatedComment,
+  ) async {
+    final cacheKey = '${ApiService._kCacheRecipeDetailsPrefix}$recipeId';
+    final cached = await _readCacheMap(cacheKey);
+    if (cached == null) return;
+
+    final comments = _asMapList(cached['comments'])
+        .map((item) => RecipeComment.fromDynamic(item))
+        .where((item) => item.body.trim().isNotEmpty)
+        .toList(growable: false);
+    cached['comments'] = _updateCommentInTree(
+      comments,
+      updatedComment,
+    ).map((item) => item.toJson()).toList();
+    await _writeCacheJson(cacheKey, cached);
+  }
+
+  List<RecipeComment> _appendCommentToTree(
+    List<RecipeComment> comments,
+    RecipeComment newComment,
+  ) {
+    if (newComment.parentCommentId == null) {
+      final next =
+          comments
+              .where((item) => item.id != newComment.id)
+              .toList(growable: true)
+            ..add(newComment);
+      return next;
+    }
+
+    return comments
+        .map((item) {
+          if (item.id != newComment.parentCommentId) {
+            return item;
+          }
+          final replies =
+              item.replies
+                  .where((reply) => reply.id != newComment.id)
+                  .toList(growable: true)
+                ..add(newComment);
+          return item.copyWith(replies: replies, replyCount: replies.length);
+        })
+        .toList(growable: false);
+  }
+
+  List<RecipeComment> _updateCommentInTree(
+    List<RecipeComment> comments,
+    RecipeComment updatedComment,
+  ) {
+    return comments
+        .map((item) {
+          if (item.id == updatedComment.id) {
+            return item.copyWith(
+              parentCommentId: updatedComment.parentCommentId,
+              authorName: updatedComment.authorName,
+              body: updatedComment.body,
+              createdAt: updatedComment.createdAt,
+              likeCount: updatedComment.likeCount,
+              likedByMe: updatedComment.likedByMe,
+              replyCount: item.replies.isNotEmpty
+                  ? item.replies.length
+                  : updatedComment.replyCount,
+            );
+          }
+          if (item.replies.isEmpty) {
+            return item;
+          }
+          final updatedReplies = _updateCommentInTree(
+            item.replies,
+            updatedComment,
+          );
+          return item.copyWith(
+            replies: updatedReplies,
+            replyCount: updatedReplies.length,
+          );
+        })
+        .toList(growable: false);
+  }
+
+  String? _normalizeLangForBackend(String? lang) {
+    final v = (lang ?? '').trim().toUpperCase();
+    if (v == 'RU') return 'RU';
+    if (v == 'EN') return 'EN';
+    return null;
+  }
+
+  String? _detectRecipeSearchLang(
+    String? uiLang, {
+    String? title,
+    String? category,
+  }) {
+    // Keep recipe language aligned with the current UI locale.
+    // Russian interface => Russian recipes, English interface => English recipes.
+    return _normalizeLangForBackend(uiLang);
   }
 
   Future<_RecipeRawPageResult> _searchDbRecipesPageRaw({
@@ -232,13 +373,17 @@ extension ApiServiceRecipesMethods on ApiService {
   }) async {
     final normalizedTitle = title?.trim();
     final normalizedCategory = category?.trim();
+    final effectiveLang = _detectRecipeSearchLang(
+      lang,
+      title: normalizedTitle,
+      category: normalizedCategory,
+    );
     final searchTokens = <String>{
       ..._buildRecipeSearchTokens(normalizedTitle),
       ..._buildRecipeSearchTokens(normalizedCategory),
     }.toList(growable: false);
 
     final payload = <String, dynamic>{
-      'lang': _normalizeLangForBackend(lang),
       'requiredDietKeys': requiredDietKeys ?? <String>[],
       'preferredHealthKeys': <String>[],
       'allergyKeys': <String>[],
@@ -248,6 +393,9 @@ extension ApiServiceRecipesMethods on ApiService {
       'sortBy': searchTokens.isEmpty ? 'recipe_id' : 'search_score',
       'sortDir': 'desc',
     };
+    if (effectiveLang != null) {
+      payload['lang'] = effectiveLang;
+    }
     if (normalizedTitle != null && normalizedTitle.isNotEmpty) {
       payload['title'] = normalizedTitle;
     }
@@ -307,7 +455,6 @@ extension ApiServiceRecipesMethods on ApiService {
       }
 
       final qp = <String, String>{
-        'lang': _normalizeLangForBackend(lang),
         'page': page.toString(),
         'size': size.toString(),
         if ((normalizedTitle ?? '').isNotEmpty) 'title': normalizedTitle!,
@@ -316,6 +463,9 @@ extension ApiServiceRecipesMethods on ApiService {
         if ((requiredDietKeys ?? []).isNotEmpty)
           'requiredDietKeys': requiredDietKeys!.join(','),
       };
+      if (effectiveLang != null) {
+        qp['lang'] = effectiveLang;
+      }
 
       final getUrl = Uri.parse(
         '${ApiService.baseUrl}/api/recipes/db/search',

@@ -54,12 +54,10 @@ extension _RecipeDetailUi on _RecipeDetailScreenState {
     if (!mounted) return;
     _safeSetState(() => _likeBusy = false);
     if (ok) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _isRu ? 'Не удалось обновить лайк' : 'Failed to update like',
-        ),
-      ),
+    _showFeedback(
+      _isRu ? 'Не удалось обновить лайк' : 'Failed to update like',
+      kind: AppFeedbackKind.error,
+      preferPopup: true,
     );
   }
 
@@ -241,6 +239,277 @@ extension _RecipeDetailUi on _RecipeDetailScreenState {
                     fontWeight: FontWeight.w500,
                     color: _colorScheme.onSurface,
                   ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _commentInitials(String authorName) {
+    final tokens = authorName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((token) => token.isNotEmpty)
+        .toList(growable: false);
+    if (tokens.isEmpty) {
+      return '?';
+    }
+    if (tokens.length == 1) {
+      return tokens.first.substring(0, 1).toUpperCase();
+    }
+    return (tokens.first.substring(0, 1) + tokens.last.substring(0, 1))
+        .toUpperCase();
+  }
+
+  String _commentTimestampText(DateTime? createdAt) {
+    if (createdAt == null) {
+      return _isRu ? 'только что' : 'just now';
+    }
+    final local = createdAt.toLocal();
+    String pad(int value) => value.toString().padLeft(2, '0');
+    if (_isRu) {
+      return '${pad(local.day)}.${pad(local.month)}.${local.year} • ${pad(local.hour)}:${pad(local.minute)}';
+    }
+    const months = <String>[
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${months[local.month - 1]} ${pad(local.day)} • ${pad(local.hour)}:${pad(local.minute)}';
+  }
+
+  Widget _commentComposer(RecipeDetails details) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _softCardBackground,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: _outlineColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_replyTarget != null) ...[
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: _RecipeDetailScreenState._accentOrange.withValues(
+                  alpha: 0.09,
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: _RecipeDetailScreenState._accentOrange.withValues(
+                    alpha: 0.2,
+                  ),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      _isRu
+                          ? 'Ответ для ${_replyTarget!.authorName}'
+                          : 'Replying to ${_replyTarget!.authorName}',
+                      style: TextStyle(
+                        color: _RecipeDetailScreenState._accentOrange,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _cancelReply,
+                    child: Text(_isRu ? 'Отмена' : 'Cancel'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          Text(
+            _replyTarget == null
+                ? (_isRu ? 'Оставить комментарий' : 'Leave a comment')
+                : (_isRu ? 'Написать ответ' : 'Write a reply'),
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              color: _colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _commentController,
+            focusNode: _commentFocusNode,
+            minLines: 2,
+            maxLines: 4,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: InputDecoration(
+              hintText: _isRu
+                  ? 'Напишите, как у вас получился рецепт'
+                  : 'Write how the recipe turned out for you',
+              filled: true,
+              fillColor: _cardBackground,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: BorderSide(color: _outlineColor),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: BorderSide(color: _outlineColor),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: BorderSide(
+                  color: _RecipeDetailScreenState._accentOrange,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
+              onPressed: _submittingComment
+                  ? null
+                  : () => _submitComment(details),
+              icon: Icon(
+                _submittingComment ? Icons.sync_rounded : Icons.send_rounded,
+              ),
+              label: Text(
+                _submittingComment
+                    ? (_isRu ? 'Отправляем...' : 'Posting...')
+                    : (_replyTarget == null
+                          ? (_isRu ? 'Опубликовать' : 'Post comment')
+                          : (_isRu ? 'Ответить' : 'Reply')),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _commentCard(
+    RecipeDetails details,
+    RecipeComment comment, {
+    int depth = 0,
+  }) {
+    final canReply = depth == 0;
+    final likeBusy = _commentLikeBusyIds.contains(comment.id);
+    final likeLabel = comment.likeCount > 0
+        ? (_isRu
+              ? 'Нравится ${comment.likeCount}'
+              : 'Like ${comment.likeCount}')
+        : (_isRu ? 'Нравится' : 'Like');
+    return Container(
+      width: double.infinity,
+      margin: EdgeInsets.only(bottom: 10, left: depth == 0 ? 0 : 22),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _softCardBackground,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: _outlineColor),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: _RecipeDetailScreenState._accentOrange.withValues(
+                alpha: 0.12,
+              ),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              _commentInitials(comment.authorName),
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                color: _RecipeDetailScreenState._accentOrange,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        comment.authorName,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: _colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _commentTimestampText(comment.createdAt),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _mutedTextColor,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  comment.body,
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.4,
+                    fontWeight: FontWeight.w500,
+                    color: _colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    TextButton.icon(
+                      onPressed: likeBusy
+                          ? null
+                          : () => _toggleCommentLike(details, comment),
+                      icon: Icon(
+                        comment.likedByMe
+                            ? Icons.favorite_rounded
+                            : Icons.favorite_border_rounded,
+                        size: 16,
+                      ),
+                      label: Text(
+                        likeBusy ? (_isRu ? '...' : '...') : likeLabel,
+                      ),
+                    ),
+                    if (canReply)
+                      TextButton.icon(
+                        onPressed: () => _startReply(comment),
+                        icon: const Icon(Icons.reply_rounded, size: 16),
+                        label: Text(_isRu ? 'Ответить' : 'Reply'),
+                      ),
+                  ],
                 ),
               ],
             ),
@@ -726,6 +995,32 @@ extension _RecipeDetailUi on _RecipeDetailScreenState {
                     r.instructionSteps.length,
                     (i) => _stepCard(r.instructionSteps[i], i),
                   ),
+                const SizedBox(height: 28),
+                _sectionHeader(
+                  eyebrow: _isRu ? 'обсуждение' : 'discussion',
+                  title: _isRu ? 'Комментарии' : 'Comments',
+                ),
+                const SizedBox(height: 14),
+                _commentComposer(r),
+                const SizedBox(height: 14),
+                if (r.comments.isEmpty)
+                  AtelierEmptyState(
+                    icon: Icons.chat_bubble_outline_rounded,
+                    title: _isRu ? 'Пока нет комментариев' : 'No comments yet',
+                    accent: _RecipeDetailScreenState._accentOrange,
+                  )
+                else
+                  ...List.generate(r.comments.length, (i) {
+                    final comment = r.comments[i];
+                    return Column(
+                      children: [
+                        _commentCard(r, comment),
+                        ...comment.replies.map(
+                          (reply) => _commentCard(r, reply, depth: 1),
+                        ),
+                      ],
+                    );
+                  }),
               ],
             ),
           ],

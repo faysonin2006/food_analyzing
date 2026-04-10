@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'core/app_feedback.dart';
 import 'core/network_monitor.dart';
+import 'core/app_notifications.dart';
 import 'core/app_scope.dart';
 import 'core/app_settings.dart';
 import 'core/app_theme.dart';
@@ -13,31 +15,64 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final settings = AppSettings();
   await settings.load();
+  await AppNotifications.instance.initialize();
+  await AppNotifications.instance.applySettings(
+    settings.notificationPreferences,
+  );
+  await AppFeedbackCenter.instance.initialize();
+  await AppNotifications.instance.syncReminderInbox(
+    settings.notificationPreferences,
+  );
   NetworkMonitor.instance.start();
   runApp(MyApp(settings: settings));
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   final AppSettings settings;
   const MyApp({super.key, required this.settings});
 
   @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    AppNotifications.instance.syncReminderInbox(
+      widget.settings.notificationPreferences,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AppScope(
-      settings: settings,
+      settings: widget.settings,
       child: AnimatedBuilder(
-        animation: settings,
+        animation: widget.settings,
         builder: (_, _) {
           return MaterialApp(
             debugShowCheckedModeBanner: false,
-            locale: settings.locale,
+            locale: widget.settings.locale,
             supportedLocales: const [Locale('ru'), Locale('en')],
             localizationsDelegates: const [
               GlobalMaterialLocalizations.delegate,
               GlobalWidgetsLocalizations.delegate,
               GlobalCupertinoLocalizations.delegate,
             ],
-            themeMode: settings.themeMode,
+            themeMode: widget.settings.themeMode,
             theme: AppTheme.light(),
             darkTheme: AppTheme.dark(),
             initialRoute: '/auth',

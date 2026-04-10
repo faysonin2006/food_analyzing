@@ -27,9 +27,20 @@ extension ApiServiceAuthMethods on ApiService {
           );
           print('Login PUT $url: ${putResp.statusCode}');
           if (await _saveTokensFromAuthResponse(putResp)) return true;
+          print('Login failed [$url]: ${putResp.body}');
+          if (putResp.statusCode != 404 &&
+              putResp.statusCode != 405 &&
+              putResp.statusCode != 501) {
+            return false;
+          }
         }
 
         print('Login failed [$url]: ${postResp.body}');
+        if (postResp.statusCode != 404 &&
+            postResp.statusCode != 405 &&
+            postResp.statusCode != 501) {
+          return false;
+        }
       } catch (e) {
         print('Login error [$url]: $e');
       }
@@ -79,9 +90,20 @@ extension ApiServiceAuthMethods on ApiService {
           )) {
             return true;
           }
+          print('Register failed [$url]: ${putResp.body}');
+          if (putResp.statusCode != 404 &&
+              putResp.statusCode != 405 &&
+              putResp.statusCode != 501) {
+            return false;
+          }
         }
 
         print('Register failed [$url]: ${postResp.body}');
+        if (postResp.statusCode != 404 &&
+            postResp.statusCode != 405 &&
+            postResp.statusCode != 501) {
+          return false;
+        }
       } catch (e) {
         print('Register error [$url]: $e');
       }

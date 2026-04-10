@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_feedback.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
 import '../core/tr.dart';
@@ -29,6 +30,7 @@ class _LikedRecipesScreenState extends State<LikedRecipesScreen> {
   List<RecipeSummary> _items = const [];
 
   bool get _isRu => Localizations.localeOf(context).languageCode == 'ru';
+  String get _feedbackSource => _isRu ? 'Избранное' : 'Favorites';
 
   @override
   void initState() {
@@ -125,14 +127,14 @@ class _LikedRecipesScreenState extends State<LikedRecipesScreen> {
   Future<void> _toggleLike(int recipeId) async {
     final ok = await _likes.unlike(recipeId);
     if (ok || !mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _isRu
-              ? 'Не удалось удалить из избранного'
-              : 'Failed to remove from favorites',
-        ),
-      ),
+    showAppFeedback(
+      context,
+      _isRu
+          ? 'Не удалось удалить из избранного'
+          : 'Failed to remove from favorites',
+      kind: AppFeedbackKind.error,
+      source: _feedbackSource,
+      preferPopup: true,
     );
   }
 

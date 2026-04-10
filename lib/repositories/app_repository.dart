@@ -160,20 +160,28 @@ class AppRepository {
     size: size,
   );
 
-  Future<List<String>> rerankSuggestionCandidateIds({
-    required String query,
-    required List<Map<String, dynamic>> candidates,
-    int limit = 8,
-  }) => _api.rerankSuggestionCandidateIds(
-    query: query,
-    candidates: candidates,
-    limit: limit,
-  );
-
   Future<RecipeDetails?> getRecipeDetails({
     required int recipeId,
     RecipeSummary? seedSummary,
   }) => _api.getRecipeDetails(recipeId: recipeId, seedSummary: seedSummary);
+  Future<RecipeComment> addRecipeComment({
+    required int recipeId,
+    required String text,
+    int? parentCommentId,
+  }) => _api.addRecipeComment(
+    recipeId: recipeId,
+    text: text,
+    parentCommentId: parentCommentId,
+  );
+  Future<RecipeComment> setRecipeCommentLike({
+    required int recipeId,
+    required int commentId,
+    required bool liked,
+  }) => _api.setRecipeCommentLike(
+    recipeId: recipeId,
+    commentId: commentId,
+    liked: liked,
+  );
 
   Future<void> saveSearchHistory(SearchHistoryDraft draft) =>
       _searchHistoryDb.save(draft);

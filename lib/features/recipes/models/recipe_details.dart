@@ -10,6 +10,7 @@ class RecipeDetails {
   final List<IngredientItem> ingredients;
   final List<InstructionStepItem> instructionSteps;
   final List<NutritionItem> nutritions;
+  final List<RecipeComment> comments;
   final List<String> blockDietKeys;
   final List<String> blockAllergyKeys;
   final List<String> blockHealthKeys;
@@ -26,6 +27,7 @@ class RecipeDetails {
     required this.ingredients,
     required this.instructionSteps,
     required this.nutritions,
+    required this.comments,
     required this.blockDietKeys,
     required this.blockAllergyKeys,
     required this.blockHealthKeys,
@@ -43,6 +45,7 @@ class RecipeDetails {
     List<IngredientItem>? ingredients,
     List<InstructionStepItem>? instructionSteps,
     List<NutritionItem>? nutritions,
+    List<RecipeComment>? comments,
     List<String>? blockDietKeys,
     List<String>? blockAllergyKeys,
     List<String>? blockHealthKeys,
@@ -59,6 +62,7 @@ class RecipeDetails {
       ingredients: ingredients ?? this.ingredients,
       instructionSteps: instructionSteps ?? this.instructionSteps,
       nutritions: nutritions ?? this.nutritions,
+      comments: comments ?? this.comments,
       blockDietKeys: blockDietKeys ?? this.blockDietKeys,
       blockAllergyKeys: blockAllergyKeys ?? this.blockAllergyKeys,
       blockHealthKeys: blockHealthKeys ?? this.blockHealthKeys,
@@ -93,6 +97,9 @@ class RecipeDetails {
       ),
       nutritions: NutritionItem.listFromDynamic(
         json['nutritions'] ?? json['nutritionsJson'] ?? json['nutritions_json'],
+      ),
+      comments: RecipeComment.listFromDynamic(
+        json['comments'] ?? json['commentsJson'] ?? json['comments_json'],
       ),
       blockDietKeys: _toStringList(
         json['blockDietKeys'] ??

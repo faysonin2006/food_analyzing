@@ -1,14 +1,13 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/app_feedback.dart';
+import '../core/live_refresh.dart';
 import '../core/app_theme.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
-import '../core/smart_food_suggestions.dart';
-import '../core/smart_suggestion_ml.dart';
-import '../core/smart_suggestion_panel.dart';
+import '../core/food_suggestions.dart';
+import '../core/suggestion_panel.dart';
 import '../repositories/app_repository.dart';
 
 class ShoppingListScreen extends StatefulWidget {
@@ -18,19 +17,50 @@ class ShoppingListScreen extends StatefulWidget {
   State<ShoppingListScreen> createState() => _ShoppingListScreenState();
 }
 
-class _ShoppingListScreenState extends State<ShoppingListScreen> {
+class _ShoppingListScreenState extends State<ShoppingListScreen>
+    with LiveRefreshState<ShoppingListScreen> {
   final AppRepository repository = AppRepository.instance;
   final ScrollController _scrollController = ScrollController();
   GlobalKey<AnimatedListState> _listKey = GlobalKey<AnimatedListState>();
   bool _loading = true;
+  bool _isFetching = false;
   List<Map<String, dynamic>> _items = const [];
   Set<String> _busyItemIds = <String>{};
   bool _bulkDeletingDone = false;
   static const _listAnimationDuration = Duration(milliseconds: 220);
+  String _lastItemsSignature = '';
 
   bool get _isRu => Localizations.localeOf(context).languageCode == 'ru';
   ThemeData get _theme => Theme.of(context);
   ColorScheme get _cs => _theme.colorScheme;
+  String get _feedbackSource => _isRu ? 'Список покупок' : 'Shopping list';
+
+  void _showFeedback(
+    String message, {
+    AppFeedbackKind? kind,
+    bool preferPopup = false,
+    bool addToInbox = true,
+  }) {
+    if (!mounted) return;
+    showAppFeedback(
+      context,
+      message,
+      kind: kind,
+      source: _feedbackSource,
+      preferPopup: preferPopup,
+      addToInbox: addToInbox,
+    );
+  }
+
+  @override
+  Duration get liveRefreshInterval => const Duration(seconds: 8);
+
+  @override
+  bool get enableLiveRefresh => ModalRoute.of(context)?.isCurrent ?? true;
+
+  @override
+  Future<void> performLiveRefresh() =>
+      _load(preserveOffset: true, silent: true);
 
   @override
   void initState() {
@@ -44,24 +74,51 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
     super.dispose();
   }
 
-  Future<void> _load({bool preserveOffset = false}) async {
+  Future<void> _load({bool preserveOffset = false, bool silent = false}) async {
+    if (_isFetching) return;
+    _isFetching = true;
     final offset = preserveOffset && _scrollController.hasClients
         ? _scrollController.offset
         : 0.0;
-    setState(() => _loading = true);
-    final items = await repository.getShoppingItems();
-    if (!mounted) return;
-    setState(() {
-      _items = _sortedItems(items);
-      _listKey = GlobalKey<AnimatedListState>();
-      _loading = false;
-    });
-    if (preserveOffset) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!_scrollController.hasClients) return;
-        final maxOffset = _scrollController.position.maxScrollExtent;
-        _scrollController.jumpTo(offset.clamp(0.0, maxOffset));
-      });
+    if (!silent) {
+      setState(() => _loading = true);
+    }
+    try {
+      final items = await repository.getShoppingItems();
+      final sortedItems = _sortedItems(items);
+      final nextSignature = liveRefreshSignature(sortedItems);
+
+      if (!mounted) return;
+      final hasChanged = nextSignature != _lastItemsSignature;
+      if (hasChanged || !silent || _loading) {
+        setState(() {
+          _items = sortedItems;
+          _listKey = GlobalKey<AnimatedListState>();
+          _loading = false;
+        });
+        if (preserveOffset) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!_scrollController.hasClients) return;
+            final maxOffset = _scrollController.position.maxScrollExtent;
+            _scrollController.jumpTo(offset.clamp(0.0, maxOffset));
+          });
+        }
+      }
+      _lastItemsSignature = nextSignature;
+    } catch (error) {
+      if (!mounted) return;
+      if (!silent) {
+        setState(() => _loading = false);
+        _showFeedback(
+          _isRu
+              ? 'Не удалось загрузить список покупок.'
+              : 'Failed to load shopping list.',
+          kind: AppFeedbackKind.error,
+          preferPopup: true,
+        );
+      }
+    } finally {
+      _isFetching = false;
     }
   }
 
@@ -151,52 +208,20 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
     final unitCtrl = TextEditingController();
     final itemSuggestionsSource = List<Map<String, dynamic>>.from(_items);
     var creatingItem = false;
-    var nameSuggestions = const <SmartSuggestionOption>[];
-    Timer? suggestionDebounce;
-    var activeSuggestionRequestId = 0;
+    var nameSuggestions = const <SuggestionOption>[];
 
     void refreshNameSuggestions(StateSetter setSheetState) {
       final query = nameCtrl.text;
-      final candidates = SmartFoodSuggestions.collectProductSuggestions(
+      final candidates = FoodSuggestions.collectProductSuggestions(
         isRu: _isRu,
         shoppingItems: itemSuggestionsSource,
       );
-      final local = SmartSuggestionMl.localVisibleSuggestions(
-        candidates: candidates,
+      final local = FoodSuggestions.rankSuggestions(
+        candidates,
         query: query,
         limit: 6,
       );
       setSheetState(() => nameSuggestions = local);
-
-      suggestionDebounce?.cancel();
-      final trimmedQuery = query.trim();
-      if (trimmedQuery.isEmpty || candidates.isEmpty) return;
-      final requestId = ++activeSuggestionRequestId;
-      suggestionDebounce = Timer(const Duration(milliseconds: 220), () async {
-        final ranked = await SmartSuggestionMl.rerankSuggestions(
-          query: trimmedQuery,
-          candidates: candidates,
-          visibleLimit: 6,
-          ranker:
-              ({
-                required String query,
-                required List<Map<String, dynamic>> candidates,
-                required int limit,
-              }) {
-                return repository.rerankSuggestionCandidateIds(
-                  query: query,
-                  candidates: candidates,
-                  limit: limit,
-                );
-              },
-        );
-        if (!mounted ||
-            requestId != activeSuggestionRequestId ||
-            nameCtrl.text.trim() != trimmedQuery) {
-          return;
-        }
-        setSheetState(() => nameSuggestions = ranked);
-      });
     }
 
     final created = await showModalBottomSheet<Map<String, dynamic>>(
@@ -224,11 +249,9 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                       onTap: () => refreshNameSuggestions(setSheetState),
                       onChanged: (_) => refreshNameSuggestions(setSheetState),
                       onTapOutside: (_) {
-                        suggestionDebounce?.cancel();
-                        activeSuggestionRequestId++;
                         FocusScope.of(context).unfocus();
                         setSheetState(() {
-                          nameSuggestions = const <SmartSuggestionOption>[];
+                          nameSuggestions = const <SuggestionOption>[];
                         });
                       },
                       decoration: InputDecoration(
@@ -242,8 +265,6 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                         suggestions: nameSuggestions,
                         isRu: _isRu,
                         onSelected: (option) {
-                          suggestionDebounce?.cancel();
-                          activeSuggestionRequestId++;
                           nameCtrl.text = option.primaryText;
                           nameCtrl.selection = TextSelection.collapsed(
                             offset: nameCtrl.text.length,
@@ -259,7 +280,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
                           }
                           FocusScope.of(context).unfocus();
                           setSheetState(() {
-                            nameSuggestions = const <SmartSuggestionOption>[];
+                            nameSuggestions = const <SuggestionOption>[];
                           });
                         },
                       ),
@@ -342,7 +363,6 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
         ),
       ),
     );
-    suggestionDebounce?.cancel();
     if (!mounted) return;
     if (created != null) {
       await HapticFeedback.lightImpact();
@@ -427,14 +447,12 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
         );
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _isRu
-                ? 'Не удалось удалить позицию.'
-                : 'Failed to delete shopping item.',
-          ),
-        ),
+      _showFeedback(
+        _isRu
+            ? 'Не удалось удалить позицию.'
+            : 'Failed to delete shopping item.',
+        kind: AppFeedbackKind.error,
+        preferPopup: true,
       );
     }
     _setItemBusy(itemId, false);
@@ -472,14 +490,12 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
         restoreIndex,
         duration: _listAnimationDuration,
       );
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _isRu
-                ? 'Не удалось обновить позицию.'
-                : 'Failed to update shopping item.',
-          ),
-        ),
+      _showFeedback(
+        _isRu
+            ? 'Не удалось обновить позицию.'
+            : 'Failed to update shopping item.',
+        kind: AppFeedbackKind.error,
+        preferPopup: true,
       );
     }
     _setItemBusy(itemId, false);
@@ -545,24 +561,19 @@ class _ShoppingListScreenState extends State<ShoppingListScreen> {
     if (failedCount > 0) {
       await _load(preserveOffset: true);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _isRu
-                ? 'Часть купленных позиций не удалось удалить.'
-                : 'Some purchased items could not be deleted.',
-          ),
-        ),
+      _showFeedback(
+        _isRu
+            ? 'Часть купленных позиций не удалось удалить.'
+            : 'Some purchased items could not be deleted.',
+        kind: AppFeedbackKind.error,
+        preferPopup: true,
       );
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _isRu ? 'Купленные позиции удалены' : 'Purchased items removed',
-        ),
-      ),
+    _showFeedback(
+      _isRu ? 'Купленные позиции удалены' : 'Purchased items removed',
+      kind: AppFeedbackKind.success,
     );
   }
 

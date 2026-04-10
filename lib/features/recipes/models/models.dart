@@ -2,6 +2,7 @@ import 'dart:convert';
 
 part 'recipe_summary.dart';
 part 'recipe_details.dart';
+part 'recipe_comment.dart';
 part 'ingredient_item.dart';
 part 'instruction_step_item.dart';
 part 'nutrition_item.dart';

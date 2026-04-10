@@ -506,6 +506,11 @@ class AtelierSheetFrame extends StatelessWidget {
     final media = MediaQuery.of(context);
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final void Function() closeSheet =
+        onClose ??
+        () {
+          Navigator.of(context).maybePop();
+        };
 
     return Padding(
       padding: EdgeInsets.fromLTRB(16, 12, 16, media.viewInsets.bottom + 20),
@@ -533,12 +538,27 @@ class AtelierSheetFrame extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Center(
-                  child: Container(
-                    width: 56,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: cs.outlineVariant.withValues(alpha: 0.7),
-                      borderRadius: BorderRadius.circular(999),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onVerticalDragEnd: (details) {
+                      final velocity = details.primaryVelocity ?? 0;
+                      if (velocity > 160) {
+                        closeSheet();
+                      }
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 6,
+                      ),
+                      child: Container(
+                        width: 56,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: cs.outlineVariant.withValues(alpha: 0.7),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
                     ),
                   ),
                 ),

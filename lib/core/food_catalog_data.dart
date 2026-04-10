@@ -1,4 +1,4 @@
-part of 'smart_food_suggestions.dart';
+part of 'food_suggestions.dart';
 
 const List<_CatalogFoodEntry> _extendedCatalog = <_CatalogFoodEntry>[
   _CatalogFoodEntry(
