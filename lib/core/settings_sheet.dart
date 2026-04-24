@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'atelier_ui.dart';
 import 'app_notifications.dart';
 import 'app_scope.dart';
 import 'tr.dart';
@@ -34,25 +35,12 @@ Future<void> showAppSettingsSheet(BuildContext context) {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          tr(sheetContext, 'settings'),
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () => Navigator.of(sheetContext).pop(),
-                        tooltip: MaterialLocalizations.of(
-                          sheetContext,
-                        ).closeButtonTooltip,
-                        icon: const Icon(Icons.close_rounded),
-                      ),
-                    ],
+                  AtelierSheetHeader(
+                    title: tr(sheetContext, 'settings'),
+                    subtitle: settings.locale.languageCode == 'ru'
+                        ? 'Язык, тема и напоминания в одном месте.'
+                        : 'Language, theme, and reminders in one place.',
+                    onClose: () => Navigator.of(sheetContext).pop(),
                   ),
                   const SizedBox(height: 12),
                   SwitchListTile(

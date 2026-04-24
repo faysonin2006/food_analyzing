@@ -1,13 +1,17 @@
 part of 'api_service.dart';
 
 extension ApiServiceProfileLikesMethods on ApiService {
-  Future<Map<String, dynamic>?> getProfile() async {
-    final hotCache = _readHotProfileCache();
+  Future<Map<String, dynamic>?> getProfile({
+    bool preferCache = true,
+    bool allowCachedFallback = true,
+  }) async {
+    final hotCache = preferCache ? _readHotProfileCache() : null;
     if (hotCache != null) {
       return hotCache;
     }
 
     if (!NetworkMonitor.instance.isOnline) {
+      if (!allowCachedFallback) return null;
       final cached = await _readCacheMap(
         ApiService._kCacheProfileMe,
         maxAge: ApiService._profileCacheTtl,
@@ -16,7 +20,7 @@ extension ApiServiceProfileLikesMethods on ApiService {
       return _cloneProfileMap(cached);
     }
 
-    final inFlight = _inFlightProfileRequest;
+    final inFlight = preferCache ? _inFlightProfileRequest : null;
     if (inFlight != null) {
       return inFlight;
     }
@@ -45,6 +49,10 @@ extension ApiServiceProfileLikesMethods on ApiService {
         print('Profile error: $e');
       }
 
+      if (!allowCachedFallback) {
+        return null;
+      }
+
       final cached = await _readCacheMap(
         ApiService._kCacheProfileMe,
         maxAge: ApiService._profileCacheTtl,
@@ -53,11 +61,13 @@ extension ApiServiceProfileLikesMethods on ApiService {
       return _cloneProfileMap(cached);
     }();
 
-    _inFlightProfileRequest = future;
+    if (preferCache) {
+      _inFlightProfileRequest = future;
+    }
     try {
       return await future;
     } finally {
-      if (identical(_inFlightProfileRequest, future)) {
+      if (preferCache && identical(_inFlightProfileRequest, future)) {
         _inFlightProfileRequest = null;
       }
     }
@@ -127,6 +137,7 @@ extension ApiServiceProfileLikesMethods on ApiService {
     }
 
     Future<bool> tryUpload(Uri url, String method, String fileField) async {
+      final requestRevision = _sessionRevision;
       var response = await sendOnce(url, method, fileField);
       var body = await response.stream.bytesToString();
 
@@ -138,7 +149,7 @@ extension ApiServiceProfileLikesMethods on ApiService {
       if (response.statusCode == 401) {
         final refreshed = await _refreshToken();
         if (!refreshed) {
-          await logout();
+          await _logoutIfSessionUnchanged(requestRevision);
           return false;
         }
         response = await sendOnce(url, method, fileField);

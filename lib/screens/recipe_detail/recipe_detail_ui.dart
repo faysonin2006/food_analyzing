@@ -95,6 +95,655 @@ extension _RecipeDetailUi on _RecipeDetailScreenState {
     );
   }
 
+  Widget _shareStatChip({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE5DCCE)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 17, color: _RecipeDetailScreenState._accentOrange),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF7A7067),
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              height: 1.1,
+              color: Color(0xFF1F1A16),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sharePanel({
+    required String title,
+    required Widget child,
+    EdgeInsets padding = const EdgeInsets.all(16),
+  }) {
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE6DED2)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF1F1A16),
+            ),
+          ),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _shareMacroCell({
+    required String label,
+    required String value,
+    required IconData icon,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F4EE),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFEAE2D8)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: _RecipeDetailScreenState._accentOrange.withValues(
+                alpha: 0.13,
+              ),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            alignment: Alignment.center,
+            child: Icon(
+              icon,
+              size: 17,
+              color: _RecipeDetailScreenState._accentOrange,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF7A7067),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF1F1A16),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _shareIngredientRow(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            margin: const EdgeInsets.only(top: 6),
+            decoration: const BoxDecoration(
+              color: Color(0xFF4D9651),
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                height: 1.35,
+                color: Color(0xFF1F1A16),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _shareStepRow({required int stepNo, required String text}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F7EA),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              '$stepNo',
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF4D9651),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                height: 1.38,
+                color: Color(0xFF1F1A16),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _shareRecipeCard(
+    RecipeDetails r, {
+    required ImageProvider imageProvider,
+  }) {
+    final nutrients = _allNutrients(r);
+    final prepTime = _formatTimeText(r.times.prepTime);
+    final cookTime = _formatTimeText(r.times.cookTime);
+    final totalTime = _formatTimeText(r.times.totalTime);
+    final category =
+        _cleanText(r.category) ??
+        '${r.ingredients.length} ${_isRu ? 'ингредиентов' : 'ingredients'}';
+
+    String nutrientDisplay(List<String> keys, String fallback) {
+      for (final nutrient in nutrients) {
+        final normalized = nutrient.nutrient.toLowerCase();
+        if (keys.any((key) => normalized.contains(key))) {
+          return _nutritionValue(nutrient);
+        }
+      }
+      return fallback;
+    }
+
+    final caloriesDisplay = nutrientDisplay([
+      'calorie',
+      'калори',
+    ], widget.seed?.calories?.round().toString() ?? '--');
+    final proteinDisplay = nutrientDisplay([
+      'protein',
+      'бел',
+    ], widget.seed?.protein?.toStringAsFixed(1) ?? '--');
+    final fatDisplay = nutrientDisplay([
+      'fat',
+      'жир',
+    ], widget.seed?.fat?.toStringAsFixed(1) ?? '--');
+    final carbsDisplay = nutrientDisplay([
+      'carb',
+      'углев',
+    ], widget.seed?.carbs?.toStringAsFixed(1) ?? '--');
+    final ingredientRows = r.ingredients
+        .map(_ingredientLineText)
+        .where((item) => item.trim().isNotEmpty && item.trim() != '-')
+        .toList(growable: false);
+    final stepRows = r.instructionSteps
+        .where((step) => step.text.trim().isNotEmpty)
+        .toList(growable: false);
+    final prepCookValue = [
+      if (prepTime != null) prepTime,
+      if (cookTime != null) cookTime,
+    ].join(' • ');
+
+    int estimateWrappedLines(String text, int charsPerLine) {
+      final normalized = text.trim();
+      if (normalized.isEmpty) return 1;
+      return ((normalized.length - 1) ~/ charsPerLine) + 1;
+    }
+
+    int ingredientHeightEstimate(String text) =>
+        18 + estimateWrappedLines(text, 34) * 20;
+
+    int stepHeightEstimate(InstructionStepItem step) =>
+        26 + estimateWrappedLines(step.text, 52) * 20;
+
+    const panelChromeHeight = 64;
+    const sectionGapHeight = 14;
+    const emptyPanelHeight = 92;
+
+    final ingredientsPanelHeight = ingredientRows.isEmpty
+        ? emptyPanelHeight
+        : panelChromeHeight +
+              ingredientRows.fold<int>(
+                0,
+                (sum, item) => sum + ingredientHeightEstimate(item),
+              );
+    final stepPrefixHeights = <int>[0];
+    for (final step in stepRows) {
+      stepPrefixHeights.add(stepPrefixHeights.last + stepHeightEstimate(step));
+    }
+
+    int stepsPanelHeight(int start, int end) {
+      final count = end - start;
+      if (count <= 0) return 0;
+      return panelChromeHeight +
+          (stepPrefixHeights[end] - stepPrefixHeights[start]);
+    }
+
+    var leftStepsCount = stepRows.isEmpty ? 0 : 1;
+    var bestDifference = double.infinity;
+    final minLeftSteps = stepRows.isEmpty ? 0 : 1;
+
+    for (
+      var candidate = minLeftSteps;
+      candidate <= stepRows.length;
+      candidate++
+    ) {
+      final leftHeight =
+          ingredientsPanelHeight +
+          sectionGapHeight +
+          stepsPanelHeight(0, candidate);
+      final rightHeight = stepsPanelHeight(candidate, stepRows.length);
+      final difference = (leftHeight - rightHeight).abs().toDouble();
+      final isBetter = difference < bestDifference;
+      final isSameButLowerPeak =
+          difference == bestDifference &&
+          leftHeight > 0 &&
+          rightHeight > 0 &&
+          (leftHeight > rightHeight ? leftHeight : rightHeight) <
+              ((ingredientsPanelHeight +
+                          sectionGapHeight +
+                          stepsPanelHeight(0, leftStepsCount)) >
+                      stepsPanelHeight(leftStepsCount, stepRows.length)
+                  ? ingredientsPanelHeight +
+                        sectionGapHeight +
+                        stepsPanelHeight(0, leftStepsCount)
+                  : stepsPanelHeight(leftStepsCount, stepRows.length));
+      if (isBetter || isSameButLowerPeak) {
+        bestDifference = difference;
+        leftStepsCount = candidate;
+      }
+    }
+
+    final leftSteps = stepRows.take(leftStepsCount).toList(growable: false);
+    final rightSteps = stepRows.skip(leftStepsCount).toList(growable: false);
+    final useTwoColumns = rightSteps.isNotEmpty;
+
+    Widget stepSection(
+      List<InstructionStepItem> steps, {
+      required String title,
+      required int startOffset,
+    }) {
+      if (steps.isEmpty) {
+        return _sharePanel(
+          title: title,
+          child: Text(
+            _isRu
+                ? 'Шаги приготовления не указаны'
+                : 'Instructions not specified',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF7A7067),
+            ),
+          ),
+        );
+      }
+
+      return _sharePanel(
+        title: title,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: steps
+              .asMap()
+              .entries
+              .map((entry) {
+                final step = entry.value;
+                final position = step.position;
+                return _shareStepRow(
+                  stepNo: position == null || position <= 0
+                      ? startOffset + entry.key + 1
+                      : position,
+                  text: step.text.trim(),
+                );
+              })
+              .toList(growable: false),
+        ),
+      );
+    }
+
+    Widget leftColumn() {
+      return Column(
+        children: [
+          _sharePanel(
+            title: _isRu ? 'Ингредиенты' : 'Ingredients',
+            child: ingredientRows.isEmpty
+                ? Text(
+                    _isRu
+                        ? 'Ингредиенты не указаны'
+                        : 'Ingredients not specified',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF7A7067),
+                    ),
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: ingredientRows
+                        .map(_shareIngredientRow)
+                        .toList(growable: false),
+                  ),
+          ),
+          const SizedBox(height: 14),
+          stepSection(
+            leftSteps,
+            title: _isRu ? 'Шаги приготовления' : 'Instructions',
+            startOffset: 0,
+          ),
+        ],
+      );
+    }
+
+    Widget rightColumn() {
+      if (rightSteps.isEmpty) {
+        return _sharePanel(
+          title: _isRu
+              ? 'Рецепт из Food Analyzing'
+              : 'Recipe from Food Analyzing',
+          child: Text(
+            _isRu
+                ? 'Полный рецепт на одном листе.'
+                : 'Full recipe on one sheet.',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              height: 1.35,
+              color: Color(0xFF7A7067),
+            ),
+          ),
+        );
+      }
+
+      return stepSection(
+        rightSteps,
+        title: _isRu
+            ? 'Шаги приготовления, продолжение'
+            : 'Instructions continued',
+        startOffset: leftSteps.length,
+      );
+    }
+
+    return SizedBox(
+      width: 1080,
+      child: Material(
+        color: const Color(0xFFF6F1E9),
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFFEAF6E3), Color(0xFFF5EFE6), Color(0xFFFFFBF7)],
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(34),
+                  child: SizedBox(
+                    height: 420,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            image: DecorationImage(
+                              image: imageProvider,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        ),
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Colors.black.withValues(alpha: 0.08),
+                                Colors.black.withValues(alpha: 0.22),
+                                Colors.black.withValues(alpha: 0.74),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(26),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.92),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  _isRu ? 'ПОЛНЫЙ РЕЦЕПТ' : 'FULL RECIPE',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 1.0,
+                                    color: Color(0xFF4D9651),
+                                  ),
+                                ),
+                              ),
+                              const Spacer(),
+                              Text(
+                                r.title,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 42,
+                                  fontWeight: FontWeight.w900,
+                                  height: 0.96,
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                category,
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.94),
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _shareStatChip(
+                        icon: Icons.schedule_rounded,
+                        label: _isRu ? 'Время' : 'Time',
+                        value: totalTime ?? '--',
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _shareStatChip(
+                        icon: Icons.restaurant_menu_rounded,
+                        label: _isRu ? 'Порции' : 'Serves',
+                        value: _servesText(r),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _shareStatChip(
+                        icon: Icons.timer_outlined,
+                        label: _isRu ? 'Prep/Cook' : 'Prep/Cook',
+                        value: prepCookValue.isEmpty ? '--' : prepCookValue,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                _sharePanel(
+                  title: _isRu ? 'КБЖУ' : 'Macros',
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _shareMacroCell(
+                              label: tr(context, 'calories'),
+                              value: caloriesDisplay,
+                              icon: Icons.local_fire_department_rounded,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _shareMacroCell(
+                              label: tr(context, 'protein'),
+                              value: proteinDisplay,
+                              icon: Icons.fitness_center_rounded,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _shareMacroCell(
+                              label: tr(context, 'fats'),
+                              value: fatDisplay,
+                              icon: Icons.opacity_rounded,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _shareMacroCell(
+                              label: tr(context, 'carbs'),
+                              value: carbsDisplay,
+                              icon: Icons.grain_rounded,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                if (useTwoColumns)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: leftColumn()),
+                      const SizedBox(width: 16),
+                      Expanded(child: rightColumn()),
+                    ],
+                  )
+                else
+                  leftColumn(),
+                const SizedBox(height: 16),
+                Center(
+                  child: Text(
+                    _isRu
+                        ? 'Рецепт из Food Analyzing'
+                        : 'Recipe from Food Analyzing',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF7A7067),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _ingredientCard(
     IngredientItem item,
     int index, {
@@ -121,7 +770,7 @@ extension _RecipeDetailUi on _RecipeDetailScreenState {
         ),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: 26,
@@ -145,45 +794,77 @@ extension _RecipeDetailUi on _RecipeDetailScreenState {
             ),
           ),
           const SizedBox(width: 14),
-          if (quantity != null && quantity.isNotEmpty) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: _colorScheme.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                quantity,
-                style: TextStyle(
-                  color: isInPantry
-                      ? _RecipeDetailScreenState._accentOrange
-                      : _colorScheme.primary,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-          ],
           Expanded(
-            child: Text(
-              nameText,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-                height: 1.2,
-                color: _colorScheme.onSurface,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            isInPantry ? (_isRu ? 'Есть' : 'Have') : (_isRu ? 'Нужно' : 'Need'),
-            style: TextStyle(
-              color: accent,
-              fontWeight: FontWeight.w800,
-              fontSize: 12,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (quantity != null && quantity.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _colorScheme.primary.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          quantity,
+                          style: TextStyle(
+                            color: isInPantry
+                                ? _RecipeDetailScreenState._accentOrange
+                                : _colorScheme.primary,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isInPantry
+                            ? _RecipeDetailScreenState._accentOrange.withValues(
+                                alpha: 0.1,
+                              )
+                            : _cardBackground,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isInPantry
+                              ? _RecipeDetailScreenState._accentOrange
+                                    .withValues(alpha: 0.22)
+                              : _outlineColor,
+                        ),
+                      ),
+                      child: Text(
+                        isInPantry
+                            ? (_isRu ? 'Есть' : 'Have')
+                            : (_isRu ? 'Нужно' : 'Need'),
+                        style: TextStyle(
+                          color: accent,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  nameText,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    height: 1.3,
+                    color: _colorScheme.onSurface,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -290,115 +971,59 @@ extension _RecipeDetailUi on _RecipeDetailScreenState {
     return '${months[local.month - 1]} ${pad(local.day)} • ${pad(local.hour)}:${pad(local.minute)}';
   }
 
-  Widget _commentComposer(RecipeDetails details) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: _softCardBackground,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: _outlineColor),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_replyTarget != null) ...[
+  Widget _commentComposerTrigger(RecipeDetails details) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(24),
+      onTap: () => _openCommentSheet(details),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: _softCardBackground,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: _outlineColor),
+        ),
+        child: Row(
+          children: [
             Container(
-              width: double.infinity,
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              width: 42,
+              height: 42,
               decoration: BoxDecoration(
                 color: _RecipeDetailScreenState._accentOrange.withValues(
-                  alpha: 0.09,
+                  alpha: 0.12,
                 ),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: _RecipeDetailScreenState._accentOrange.withValues(
-                    alpha: 0.2,
-                  ),
-                ),
+                shape: BoxShape.circle,
               ),
-              child: Row(
+              alignment: Alignment.center,
+              child: Icon(
+                Icons.chat_bubble_outline_rounded,
+                color: _RecipeDetailScreenState._accentOrange,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Text(
-                      _isRu
-                          ? 'Ответ для ${_replyTarget!.authorName}'
-                          : 'Replying to ${_replyTarget!.authorName}',
-                      style: TextStyle(
-                        color: _RecipeDetailScreenState._accentOrange,
-                        fontWeight: FontWeight.w800,
-                      ),
+                  Text(
+                    _isRu ? 'Оставить комментарий' : 'Leave a comment',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      color: _colorScheme.onSurface,
                     ),
-                  ),
-                  TextButton(
-                    onPressed: _cancelReply,
-                    child: Text(_isRu ? 'Отмена' : 'Cancel'),
                   ),
                 ],
               ),
             ),
+            const SizedBox(width: 12),
+            Icon(
+              Icons.arrow_forward_ios_rounded,
+              size: 16,
+              color: _mutedTextColor,
+            ),
           ],
-          Text(
-            _replyTarget == null
-                ? (_isRu ? 'Оставить комментарий' : 'Leave a comment')
-                : (_isRu ? 'Написать ответ' : 'Write a reply'),
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
-              color: _colorScheme.onSurface,
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _commentController,
-            focusNode: _commentFocusNode,
-            minLines: 2,
-            maxLines: 4,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: InputDecoration(
-              hintText: _isRu
-                  ? 'Напишите, как у вас получился рецепт'
-                  : 'Write how the recipe turned out for you',
-              filled: true,
-              fillColor: _cardBackground,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
-                borderSide: BorderSide(color: _outlineColor),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
-                borderSide: BorderSide(color: _outlineColor),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(18),
-                borderSide: BorderSide(
-                  color: _RecipeDetailScreenState._accentOrange,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerRight,
-            child: FilledButton.icon(
-              onPressed: _submittingComment
-                  ? null
-                  : () => _submitComment(details),
-              icon: Icon(
-                _submittingComment ? Icons.sync_rounded : Icons.send_rounded,
-              ),
-              label: Text(
-                _submittingComment
-                    ? (_isRu ? 'Отправляем...' : 'Posting...')
-                    : (_replyTarget == null
-                          ? (_isRu ? 'Опубликовать' : 'Post comment')
-                          : (_isRu ? 'Ответить' : 'Reply')),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -410,38 +1035,40 @@ extension _RecipeDetailUi on _RecipeDetailScreenState {
   }) {
     final canReply = depth == 0;
     final likeBusy = _commentLikeBusyIds.contains(comment.id);
-    final likeLabel = comment.likeCount > 0
-        ? (_isRu
-              ? 'Нравится ${comment.likeCount}'
-              : 'Like ${comment.likeCount}')
-        : (_isRu ? 'Нравится' : 'Like');
-    return Container(
+    final avatarSize = depth == 0 ? 42.0 : 34.0;
+    final accentPink = const Color(0xFFE34D74);
+    final heartColor = comment.likedByMe ? accentPink : _mutedTextColor;
+    final card = Container(
       width: double.infinity,
-      margin: EdgeInsets.only(bottom: 10, left: depth == 0 ? 0 : 22),
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, depth == 0 ? 14 : 12, 12, 14),
       decoration: BoxDecoration(
-        color: _softCardBackground,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: _outlineColor),
+        color: depth == 0 ? _softCardBackground : _cardBackground,
+        borderRadius: BorderRadius.circular(depth == 0 ? 24 : 20),
+        border: Border.all(
+          color: depth == 0
+              ? _outlineColor
+              : _outlineColor.withValues(alpha: 0.72),
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 42,
-            height: 42,
+            width: avatarSize,
+            height: avatarSize,
             decoration: BoxDecoration(
               color: _RecipeDetailScreenState._accentOrange.withValues(
-                alpha: 0.12,
+                alpha: depth == 0 ? 0.14 : 0.1,
               ),
               shape: BoxShape.circle,
             ),
             alignment: Alignment.center,
             child: Text(
               _commentInitials(comment.authorName),
-              style: const TextStyle(
+              style: TextStyle(
                 fontWeight: FontWeight.w900,
                 color: _RecipeDetailScreenState._accentOrange,
+                fontSize: depth == 0 ? 14 : 12,
               ),
             ),
           ),
@@ -450,20 +1077,31 @@ extension _RecipeDetailUi on _RecipeDetailScreenState {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                Text(
+                  comment.authorName,
+                  style: TextStyle(
+                    fontSize: depth == 0 ? 15 : 14,
+                    fontWeight: FontWeight.w900,
+                    height: 1.0,
+                    color: _colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  comment.body,
+                  style: TextStyle(
+                    fontSize: depth == 0 ? 15.5 : 15,
+                    height: 1.35,
+                    fontWeight: FontWeight.w600,
+                    color: _colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 14,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Expanded(
-                      child: Text(
-                        comment.authorName,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w800,
-                          color: _colorScheme.onSurface,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
                     Text(
                       _commentTimestampText(comment.createdAt),
                       style: TextStyle(
@@ -472,48 +1110,105 @@ extension _RecipeDetailUi on _RecipeDetailScreenState {
                         color: _mutedTextColor,
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  comment.body,
-                  style: TextStyle(
-                    fontSize: 14,
-                    height: 1.4,
-                    fontWeight: FontWeight.w500,
-                    color: _colorScheme.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    TextButton.icon(
-                      onPressed: likeBusy
-                          ? null
-                          : () => _toggleCommentLike(details, comment),
-                      icon: Icon(
-                        comment.likedByMe
-                            ? Icons.favorite_rounded
-                            : Icons.favorite_border_rounded,
-                        size: 16,
-                      ),
-                      label: Text(
-                        likeBusy ? (_isRu ? '...' : '...') : likeLabel,
-                      ),
-                    ),
                     if (canReply)
-                      TextButton.icon(
-                        onPressed: () => _startReply(comment),
-                        icon: const Icon(Icons.reply_rounded, size: 16),
-                        label: Text(_isRu ? 'Ответить' : 'Reply'),
+                      InkWell(
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: () =>
+                            _openCommentSheet(details, replyTarget: comment),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 2,
+                            vertical: 2,
+                          ),
+                          child: Text(
+                            _isRu ? 'Ответить' : 'Reply',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: _mutedTextColor,
+                            ),
+                          ),
+                        ),
                       ),
                   ],
                 ),
               ],
             ),
           ),
+          const SizedBox(width: 10),
+          Column(
+            children: [
+              InkWell(
+                borderRadius: BorderRadius.circular(999),
+                onTap: likeBusy
+                    ? null
+                    : () => _toggleCommentLike(details, comment),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: comment.likedByMe
+                        ? accentPink.withValues(alpha: 0.12)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: likeBusy
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              heartColor,
+                            ),
+                          ),
+                        )
+                      : Icon(
+                          comment.likedByMe
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          size: 20,
+                          color: heartColor,
+                        ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                comment.likeCount > 0 ? '${comment.likeCount}' : '',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: heartColor,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    if (depth == 0) {
+      return Padding(padding: const EdgeInsets.only(bottom: 12), child: card);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 26, bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 2,
+            margin: const EdgeInsets.only(top: 10),
+            height: 74,
+            decoration: BoxDecoration(
+              color: _RecipeDetailScreenState._accentOrange.withValues(
+                alpha: 0.18,
+              ),
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: card),
         ],
       ),
     );
@@ -587,14 +1282,26 @@ extension _RecipeDetailUi on _RecipeDetailScreenState {
                       Positioned(
                         top: 16,
                         right: 16,
-                        child: _topIconButton(
-                          icon: isLiked
-                              ? Icons.favorite_rounded
-                              : Icons.favorite_border_rounded,
-                          iconColor: isLiked
-                              ? const Color(0xFFFF4F65)
-                              : Colors.white,
-                          onTap: _toggleLike,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _topIconButton(
+                              icon: _shareBusy
+                                  ? Icons.sync_rounded
+                                  : Icons.share_rounded,
+                              onTap: _shareBusy ? () {} : () => _shareRecipe(r),
+                            ),
+                            const SizedBox(width: 10),
+                            _topIconButton(
+                              icon: isLiked
+                                  ? Icons.favorite_rounded
+                                  : Icons.favorite_border_rounded,
+                              iconColor: isLiked
+                                  ? const Color(0xFFFF4F65)
+                                  : Colors.white,
+                              onTap: _toggleLike,
+                            ),
+                          ],
                         ),
                       ),
                       Positioned(
@@ -1001,7 +1708,7 @@ extension _RecipeDetailUi on _RecipeDetailScreenState {
                   title: _isRu ? 'Комментарии' : 'Comments',
                 ),
                 const SizedBox(height: 14),
-                _commentComposer(r),
+                _commentComposerTrigger(r),
                 const SizedBox(height: 14),
                 if (r.comments.isEmpty)
                   AtelierEmptyState(

@@ -40,17 +40,6 @@ class AtelierSectionIntro extends StatelessWidget {
             height: 0.96,
           ),
         ),
-        if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text(
-            subtitle!,
-            style: TextStyle(
-              color: cs.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
-              height: 1.3,
-            ),
-          ),
-        ],
       ],
     );
   }
@@ -105,7 +94,7 @@ class AtelierHeroCard extends StatelessWidget {
     super.key,
     required this.eyebrow,
     required this.title,
-    required this.subtitle,
+    this.subtitle = '',
     required this.gradientColors,
     this.pills = const [],
     this.trailing,
@@ -178,15 +167,17 @@ class AtelierHeroCard extends StatelessWidget {
               if (trailing != null) ...[const SizedBox(width: 12), trailing!],
             ],
           ),
-          const SizedBox(height: 10),
-          Text(
-            subtitle,
-            style: TextStyle(
-              color: cs.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
-              height: 1.3,
+          if (subtitle.trim().isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              subtitle,
+              style: TextStyle(
+                color: cs.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+                height: 1.3,
+              ),
             ),
-          ),
+          ],
           if (pills.isNotEmpty) ...[
             const SizedBox(height: 18),
             Wrap(spacing: 8, runSpacing: 8, children: pills),
@@ -267,6 +258,89 @@ class AtelierEmptyState extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+class AtelierCloseButton extends StatelessWidget {
+  const AtelierCloseButton({super.key, required this.onPressed, this.tooltip});
+
+  final VoidCallback onPressed;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return IconButton.filledTonal(
+      onPressed: onPressed,
+      tooltip: tooltip ?? MaterialLocalizations.of(context).closeButtonTooltip,
+      style: IconButton.styleFrom(
+        backgroundColor: Color.alphaBlend(
+          cs.surface.withValues(
+            alpha: theme.brightness == Brightness.dark ? 0.86 : 0.96,
+          ),
+          cs.surfaceContainerHighest,
+        ),
+        foregroundColor: cs.onSurface,
+      ),
+      icon: const Icon(Icons.close_rounded),
+    );
+  }
+}
+
+class AtelierSheetHeader extends StatelessWidget {
+  const AtelierSheetHeader({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.eyebrow = 'THE ORGANIC ATELIER',
+    this.trailing,
+    this.onClose,
+  });
+
+  final String title;
+  final String? subtitle;
+  final String eyebrow;
+  final Widget? trailing;
+  final VoidCallback? onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                eyebrow,
+                style: TextStyle(
+                  color: cs.primary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                title,
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (trailing != null) ...[const SizedBox(width: 12), trailing!],
+        if (onClose != null) ...[
+          const SizedBox(width: 12),
+          AtelierCloseButton(onPressed: onClose!),
+        ],
+      ],
     );
   }
 }
@@ -476,11 +550,14 @@ class AtelierFieldLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.only(left: 4, bottom: 8),
+      padding: const EdgeInsets.only(left: 4, bottom: 10),
       child: Text(
         text,
-        style: theme.textTheme.labelMedium?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
+        style: theme.textTheme.titleSmall?.copyWith(
+          color: theme.colorScheme.onSurface,
+          fontWeight: FontWeight.w800,
+          fontSize: 16.5,
+          height: 1.0,
         ),
       ),
     );
@@ -514,104 +591,68 @@ class AtelierSheetFrame extends StatelessWidget {
 
     return Padding(
       padding: EdgeInsets.fromLTRB(16, 12, 16, media.viewInsets.bottom + 20),
-      child: Container(
-        decoration: BoxDecoration(
-          color: theme.scaffoldBackgroundColor,
-          borderRadius: BorderRadius.circular(34),
-          border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.4)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(
-                alpha: theme.brightness == Brightness.dark ? 0.24 : 0.08,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+        child: Container(
+          decoration: BoxDecoration(
+            color: theme.scaffoldBackgroundColor,
+            borderRadius: BorderRadius.circular(34),
+            border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.4)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(
+                  alpha: theme.brightness == Brightness.dark ? 0.24 : 0.08,
+                ),
+                blurRadius: 28,
+                offset: const Offset(0, 12),
               ),
-              blurRadius: 28,
-              offset: const Offset(0, 12),
-            ),
-          ],
-        ),
-        child: SafeArea(
-          top: false,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Center(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onVerticalDragEnd: (details) {
-                      final velocity = details.primaryVelocity ?? 0;
-                      if (velocity > 160) {
-                        closeSheet();
-                      }
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 6,
-                      ),
-                      child: Container(
-                        width: 56,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          color: cs.outlineVariant.withValues(alpha: 0.7),
-                          borderRadius: BorderRadius.circular(999),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Center(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onVerticalDragEnd: (details) {
+                        final velocity = details.primaryVelocity ?? 0;
+                        if (velocity > 160) {
+                          closeSheet();
+                        }
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 6,
+                        ),
+                        child: Container(
+                          width: 56,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: cs.outlineVariant.withValues(alpha: 0.7),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 18),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'THE ORGANIC ATELIER',
-                            style: TextStyle(
-                              color: cs.primary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1.0,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            title,
-                            style: theme.textTheme.headlineSmall?.copyWith(
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          if (subtitle != null &&
-                              subtitle!.trim().isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              subtitle!,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: cs.onSurfaceVariant,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    if (onClose != null) ...[
-                      const SizedBox(width: 12),
-                      IconButton.filledTonal(
-                        onPressed: onClose,
-                        icon: const Icon(Icons.close_rounded),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 20),
-                child,
-              ],
+                  const SizedBox(height: 18),
+                  AtelierSheetHeader(
+                    title: title,
+                    subtitle: subtitle,
+                    onClose: onClose,
+                  ),
+                  const SizedBox(height: 20),
+                  child,
+                ],
+              ),
             ),
           ),
         ),
@@ -634,7 +675,6 @@ class AtelierDialogFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       backgroundColor: Colors.transparent,
@@ -646,32 +686,11 @@ class AtelierDialogFrame extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'THE ORGANIC ATELIER',
-              style: TextStyle(
-                color: theme.colorScheme.primary,
-                fontSize: 11,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1.0,
-              ),
+            AtelierSheetHeader(
+              title: title,
+              subtitle: subtitle,
+              onClose: () => Navigator.of(context).maybePop(),
             ),
-            const SizedBox(height: 8),
-            Text(
-              title,
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                subtitle!,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
             const SizedBox(height: 20),
             child,
           ],

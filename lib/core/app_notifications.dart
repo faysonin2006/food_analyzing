@@ -202,16 +202,27 @@ class AppNotifications {
           body: copy.weeklyBody,
         ),
     ];
+    final activeSources = reminders
+        .map((reminder) => reminder.title.trim())
+        .where((title) => title.isNotEmpty)
+        .toSet();
+    final knownReminderSources = <String>{
+      ..._allReminderTitlesForLocale('ru'),
+      ..._allReminderTitlesForLocale('en'),
+    };
+
+    await AppFeedbackCenter.instance.removeEntriesWhere((entry) {
+      final source = entry.source?.trim();
+      if (source == null || source.isEmpty) return true;
+      if (!knownReminderSources.contains(source)) return true;
+      return !activeSources.contains(source);
+    });
 
     final shouldResetSyntheticHistory =
         prefs.getBool(_historyMigrationKey) != true;
     if (shouldResetSyntheticHistory) {
-      final knownSources = <String>{
-        ..._allReminderTitlesForLocale('ru'),
-        ..._allReminderTitlesForLocale('en'),
-      };
       await AppFeedbackCenter.instance.removeEntriesWhere(
-        (entry) => knownSources.contains(entry.source),
+        (entry) => activeSources.contains(entry.source),
       );
       for (final reminder in reminders) {
         await prefs.setString(reminder.storageKey, now.toIso8601String());

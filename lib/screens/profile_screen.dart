@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -136,7 +137,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     String message, {
     AppFeedbackKind? kind,
     bool preferPopup = false,
-    bool addToInbox = true,
+    bool addToInbox = false,
   }) {
     if (!mounted) return;
     showAppFeedback(
@@ -203,14 +204,18 @@ class _ProfileScreenState extends State<ProfileScreen>
     if (v == null) return null;
     if (v is int) return v;
     if (v is num) return v.toInt();
-    return int.tryParse(v.toString());
+    final raw = v.toString().trim().replaceAll(',', '.');
+    final intValue = int.tryParse(raw);
+    if (intValue != null) return intValue;
+    final doubleValue = double.tryParse(raw);
+    return doubleValue?.round();
   }
 
   double? _readDouble(dynamic v) {
     if (v == null) return null;
     if (v is double) return v;
     if (v is num) return v.toDouble();
-    return double.tryParse(v.toString());
+    return double.tryParse(v.toString().trim().replaceAll(',', '.'));
   }
 
   int? _getTargetCalories(Map<String, dynamic>? p) {
@@ -422,13 +427,15 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   double _chartXForIndex(int index, int count, double width) {
     if (count <= 1) return width / 2;
-    return width * (index / (count - 1));
+    final segment = width / count;
+    return segment * (index + 0.5);
   }
 
   int _chartIndexForDx(double dx, int count, double width) {
     if (count <= 1 || width <= 0) return 0;
-    final ratio = (dx / width).clamp(0.0, 1.0);
-    return (ratio * (count - 1)).round().clamp(0, count - 1);
+    final segment = width / count;
+    final normalized = (dx / segment) - 0.5;
+    return normalized.round().clamp(0, count - 1);
   }
 
   Future<void> _restoreWeightChartPreferences() async {
@@ -474,6 +481,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         return StatefulBuilder(
           builder: (sheetContext, setSheetState) => AtelierSheetFrame(
             title: _isRu ? 'Вес на сегодня' : 'Today weight',
+            onClose: () => Navigator.of(sheetContext).maybePop(),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -735,6 +743,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     await _loadProfile();
   }
 
+  ///Запрос на фото
   Future<XFile?> _pickImageFile(ImageSource source) async {
     PermissionStatus status;
     if (source == ImageSource.camera) {
@@ -761,6 +770,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     return _picker.pickImage(source: source, imageQuality: 100);
   }
 
+  ///Запрос на фото
   Future<void> _pickProfileAvatar(ImageSource source) async {
     final image = await _pickImageFile(source);
     if (image == null || !mounted) return;
@@ -824,14 +834,14 @@ class _ProfileScreenState extends State<ProfileScreen>
       FocusManager.instance.primaryFocus?.unfocus();
       final profileSavedLabel = tr(context, 'profile_saved');
       final saveErrorLabel = tr(context, 'save_error');
+      final parsedHeight = _readInt(_heightController.text);
+      final parsedWeight = _readDouble(_weightController.text);
 
       final profileData = <String, dynamic>{
-        if (_heightController.text.isNotEmpty &&
-            int.tryParse(_heightController.text) != null)
-          'height': int.parse(_heightController.text),
-        if (_weightController.text.isNotEmpty &&
-            double.tryParse(_weightController.text) != null)
-          'weight': double.parse(_weightController.text),
+        if (_heightController.text.trim().isNotEmpty && parsedHeight != null)
+          'height': parsedHeight,
+        if (_weightController.text.trim().isNotEmpty && parsedWeight != null)
+          'weight': parsedWeight,
         if (_selectedGender != null) 'gender': _selectedGender,
         if (_dobController.text.isNotEmpty) 'dateOfBirth': _dobController.text,
         if (_selectedActivity != null) 'activityLevel': _selectedActivity,
@@ -889,11 +899,6 @@ class _ProfileScreenState extends State<ProfileScreen>
         title: tr(context, 'tab_profile'),
         actions: [
           AppTopAction(
-            icon: Icons.refresh_rounded,
-            tooltip: _isRu ? 'Обновить' : 'Refresh',
-            onPressed: _refreshProfile,
-          ),
-          AppTopAction(
             icon: Icons.settings_rounded,
             tooltip: tr(context, 'settings'),
             onPressed: () => showAppSettingsSheet(context),
@@ -902,11 +907,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             icon: Icons.logout_rounded,
             tooltip: tr(context, 'logout'),
             destructive: true,
-            onPressed: () async {
-              await repository.logout();
-              if (!context.mounted) return;
-              Navigator.pushReplacementNamed(context, '/login');
-            },
+            onPressed: () => repository.logout(),
           ),
         ],
       ),

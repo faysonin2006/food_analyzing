@@ -1,30 +1,34 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  static const Color atelierGreen = Color(0xFF176A21);
-  static const Color atelierMint = Color(0xFFD1FFC8);
-  static const Color atelierLime = Color(0xFFB9F474);
-  static const Color atelierWarmBg = Color(0xFFF4F0E7);
-  static const Color atelierPanel = Color(0xFFE8E2D6);
-  static const Color atelierPanelAlt = Color(0xFFD2CABB);
-  static const Color atelierText = Color(0xFF2E2F2D);
-  static const Color atelierMuted = Color(0xFF4F514B);
-  static const Color atelierHint = Color(0xFF8C8A81);
-  static const Color atelierHoney = Color(0xFFB9893E);
+  static const Color atelierGreen = Color(0xFF1E6B47);
+  static const Color atelierMint = Color(0xFFEAF9E5);
+  static const Color atelierLime = Color(0xFF7FB35A);
+  static const Color atelierWarmBg = Color(0xFFF7F4EE);
+  static const Color atelierPanel = Color(0xFFF1EBE0);
+  static const Color atelierPanelAlt = Color(0xFFD7CDBE);
+  static const Color atelierText = Color(0xFF1F2620);
+  static const Color atelierMuted = Color(0xFF58635B);
+  static const Color atelierHint = Color(0xFF7B847C);
+  static const Color atelierHoney = Color(0xFFA86A1D);
 
   static ThemeData light() {
     final scheme = const ColorScheme.light().copyWith(
       brightness: Brightness.light,
       primary: atelierGreen,
-      onPrimary: atelierMint,
+      onPrimary: Colors.white,
       secondary: atelierLime,
-      onSecondary: const Color(0xFF365C00),
+      onSecondary: const Color(0xFF18320C),
       error: const Color(0xFFB24E33),
       onError: Colors.white,
-      surface: const Color(0xFFFFFBF5),
+      surface: const Color(0xFFFFFCF8),
       onSurface: atelierText,
       tertiary: atelierHoney,
       onTertiary: Colors.white,
+      surfaceContainerLowest: Colors.white,
+      surfaceContainerLow: const Color(0xFFF9F5EE),
+      surfaceContainer: const Color(0xFFF4EEE4),
+      surfaceContainerHigh: const Color(0xFFF0E8DC),
       surfaceContainerHighest: atelierPanel,
       outlineVariant: atelierPanelAlt,
       onSurfaceVariant: atelierMuted,
@@ -206,7 +210,7 @@ class AppTheme {
         filled: true,
         fillColor: isDark
             ? scheme.surfaceContainerHighest.withValues(alpha: 0.86)
-            : atelierPanel,
+            : scheme.surfaceContainerLow,
         labelStyle: textTheme.labelMedium?.copyWith(
           color: scheme.onSurfaceVariant,
         ),
@@ -265,7 +269,7 @@ class AppTheme {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: scheme.onSurface,
+          foregroundColor: isDark ? scheme.onSurface : scheme.primary,
           side: BorderSide(color: outline.withValues(alpha: 0.28)),
           minimumSize: const Size(0, 48),
           shape: const StadiumBorder(),
@@ -287,13 +291,13 @@ class AppTheme {
                 scheme.surfaceContainerHighest.withValues(alpha: 0.78),
                 scheme.surface,
               )
-            : atelierPanel,
+            : scheme.surfaceContainerLow,
         selectedColor: isDark
             ? scheme.primary.withValues(alpha: 0.22)
             : scheme.primary.withValues(alpha: 0.14),
         disabledColor: isDark
             ? scheme.surfaceContainerHighest.withValues(alpha: 0.56)
-            : atelierPanelAlt,
+            : scheme.surfaceContainer,
         labelStyle: textTheme.bodyMedium?.copyWith(
           fontWeight: FontWeight.w700,
           color: scheme.onSurface,

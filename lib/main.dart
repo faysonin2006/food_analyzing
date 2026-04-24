@@ -10,6 +10,7 @@ import 'core/app_theme.dart';
 import 'screens/auth_gate_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_screen.dart';
+import 'repositories/app_repository.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,14 +37,19 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  final AppRepository _repository = AppRepository.instance;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _repository.authSignal.addListener(_handleAuthSignal);
   }
 
   @override
   void dispose() {
+    _repository.authSignal.removeListener(_handleAuthSignal);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -56,6 +62,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _handleAuthSignal() async {
+    final token = await _repository.getToken();
+    if (!mounted || (token != null && token.isNotEmpty)) return;
+
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) return;
+    navigator.pushNamedAndRemoveUntil('/login', (route) => false);
+  }
+
   @override
   Widget build(BuildContext context) {
     return AppScope(
@@ -65,6 +80,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         builder: (_, _) {
           return MaterialApp(
             debugShowCheckedModeBanner: false,
+            navigatorKey: _navigatorKey,
             locale: widget.settings.locale,
             supportedLocales: const [Locale('ru'), Locale('en')],
             localizationsDelegates: const [

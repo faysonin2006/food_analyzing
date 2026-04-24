@@ -1,6 +1,9 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+
+import '../core/app_theme.dart';
+import 'analytics_screen.dart';
 import 'analyze_screen.dart';
 import 'organizer_hub_screen.dart';
 import 'profile_screen.dart';
@@ -15,7 +18,11 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
-  int _activeSlot = 0;
+
+  void _switchTo(int index) {
+    if (_currentIndex == index) return;
+    setState(() => _currentIndex = index);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -23,39 +30,49 @@ class _MainScreenState extends State<MainScreen> {
     final cs = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
     final isRu = Localizations.localeOf(context).languageCode == 'ru';
-    final slots = [
-      _NavSlot(
+
+    final sideSlots = <_BottomNavSlot>[
+      _BottomNavSlot(
         label: isRu ? 'Рецепты' : 'Recipes',
         icon: Icons.restaurant_menu_outlined,
         selectedIcon: Icons.restaurant_menu_rounded,
         targetIndex: 0,
       ),
-      _NavSlot(
-        label: isRu ? 'План' : 'Organizer',
+      _BottomNavSlot(
+        label: isRu ? 'План' : 'Plan',
         icon: Icons.dashboard_customize_outlined,
         selectedIcon: Icons.dashboard_customize_rounded,
         targetIndex: 1,
       ),
-      _NavSlot(
-        label: isRu ? 'Анализ' : 'Analyze',
-        icon: Icons.camera_alt_outlined,
-        selectedIcon: Icons.camera_alt_rounded,
-        targetIndex: 2,
+      _BottomNavSlot(
+        label: isRu ? 'Аналитика' : 'Analytics',
+        icon: Icons.insights_outlined,
+        selectedIcon: Icons.insights_rounded,
+        targetIndex: 3,
       ),
-      _NavSlot(
+      _BottomNavSlot(
         label: isRu ? 'Профиль' : 'Profile',
         icon: Icons.person_outline_rounded,
         selectedIcon: Icons.person_rounded,
-        targetIndex: 3,
+        targetIndex: 4,
       ),
     ];
-    final activeColor = cs.primary;
-    final idleColor = cs.onSurfaceVariant.withValues(alpha: isDark ? 0.9 : 0.8);
-    final navBackground = Color.alphaBlend(
-      cs.surface.withValues(alpha: isDark ? 0.82 : 0.88),
+
+    final navShellColor = Color.alphaBlend(
+      cs.surface.withValues(alpha: isDark ? 0.9 : 0.96),
       theme.scaffoldBackgroundColor,
     );
-    final navBorder = cs.outlineVariant.withValues(alpha: isDark ? 0.28 : 0.18);
+    final navBorderColor = cs.outlineVariant.withValues(
+      alpha: isDark ? 0.28 : 0.18,
+    );
+    final pillIdleColor = Color.alphaBlend(
+      AppTheme.atelierGreen.withValues(alpha: isDark ? 0.18 : 0.1),
+      cs.surface,
+    );
+    final centerButtonColor = Color.alphaBlend(
+      cs.primary.withValues(alpha: isDark ? 0.22 : 0.1),
+      cs.surfaceContainerHighest,
+    );
 
     return Scaffold(
       extendBody: true,
@@ -63,58 +80,96 @@ class _MainScreenState extends State<MainScreen> {
         index: _currentIndex,
         children: [
           RecipeSearchScreen(
-            onOpenOrganizerTap: () {
-              setState(() {
-                _currentIndex = 1;
-                _activeSlot = 1;
-              });
-            },
+            isActive: _currentIndex == 0,
+            onOpenOrganizerTap: () => _switchTo(1),
           ),
-          const OrganizerHubScreen(),
-          const AnalyzeScreen(),
-          ProfileScreen(isActive: _currentIndex == 3),
+          OrganizerHubScreen(isActive: _currentIndex == 1),
+          AnalyzeScreen(isActive: _currentIndex == 2),
+          AnalyticsScreen(isActive: _currentIndex == 3),
+          ProfileScreen(isActive: _currentIndex == 4),
         ],
       ),
       bottomNavigationBar: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(30),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-            child: Container(
-              height: 82,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: navBackground,
-                borderRadius: BorderRadius.circular(30),
-                border: Border.all(color: navBorder),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.24 : 0.04),
-                    blurRadius: 24,
-                    offset: const Offset(0, 12),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: List.generate(slots.length, (slotIndex) {
-                  final slot = slots[slotIndex];
-                  return _IconNavItem(
-                    selected: _activeSlot == slotIndex,
-                    label: slot.label,
-                    icon: slot.icon,
-                    selectedIcon: slot.selectedIcon,
-                    activeColor: activeColor,
-                    idleColor: idleColor,
-                    onTap: () {
-                      setState(() {
-                        _activeSlot = slotIndex;
-                        _currentIndex = slot.targetIndex;
-                      });
-                    },
-                  );
-                }),
+        padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
+        child: SizedBox(
+          height: 86,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(34),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                decoration: BoxDecoration(
+                  color: navShellColor,
+                  borderRadius: BorderRadius.circular(34),
+                  border: Border.all(color: navBorderColor),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(
+                        alpha: isDark ? 0.24 : 0.05,
+                      ),
+                      blurRadius: 24,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _BottomPillNavItem(
+                        label: sideSlots[0].label,
+                        icon: sideSlots[0].icon,
+                        selectedIcon: sideSlots[0].selectedIcon,
+                        selected: _currentIndex == sideSlots[0].targetIndex,
+                        onTap: () => _switchTo(sideSlots[0].targetIndex),
+                        activeColor: AppTheme.atelierGreen,
+                        idleColor: pillIdleColor,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _BottomPillNavItem(
+                        label: sideSlots[1].label,
+                        icon: sideSlots[1].icon,
+                        selectedIcon: sideSlots[1].selectedIcon,
+                        selected: _currentIndex == sideSlots[1].targetIndex,
+                        onTap: () => _switchTo(sideSlots[1].targetIndex),
+                        activeColor: AppTheme.atelierGreen,
+                        idleColor: pillIdleColor,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    _BottomCenterCameraButton(
+                      selected: _currentIndex == 2,
+                      onTap: () => _switchTo(2),
+                      color: centerButtonColor,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _BottomPillNavItem(
+                        label: sideSlots[2].label,
+                        icon: sideSlots[2].icon,
+                        selectedIcon: sideSlots[2].selectedIcon,
+                        selected: _currentIndex == sideSlots[2].targetIndex,
+                        onTap: () => _switchTo(sideSlots[2].targetIndex),
+                        activeColor: AppTheme.atelierGreen,
+                        idleColor: pillIdleColor,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _BottomPillNavItem(
+                        label: sideSlots[3].label,
+                        icon: sideSlots[3].icon,
+                        selectedIcon: sideSlots[3].selectedIcon,
+                        selected: _currentIndex == sideSlots[3].targetIndex,
+                        onTap: () => _switchTo(sideSlots[3].targetIndex),
+                        activeColor: AppTheme.atelierGreen,
+                        idleColor: pillIdleColor,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -124,84 +179,166 @@ class _MainScreenState extends State<MainScreen> {
   }
 }
 
-class _IconNavItem extends StatelessWidget {
-  const _IconNavItem({
-    required this.selected,
+class _BottomPillNavItem extends StatelessWidget {
+  const _BottomPillNavItem({
     required this.label,
     required this.icon,
     required this.selectedIcon,
+    required this.selected,
+    required this.onTap,
     required this.activeColor,
     required this.idleColor,
-    required this.onTap,
   });
 
-  final bool selected;
   final String label;
   final IconData icon;
   final IconData selectedIcon;
+  final bool selected;
+  final VoidCallback onTap;
   final Color activeColor;
   final Color idleColor;
-  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final labelStyle = theme.textTheme.labelMedium?.copyWith(
-      color: selected ? theme.colorScheme.onPrimary : idleColor,
-      fontWeight: FontWeight.w700,
-      letterSpacing: 1.0,
+    final cs = theme.colorScheme;
+    final selectedBackground = Color.alphaBlend(
+      activeColor.withValues(
+        alpha: theme.brightness == Brightness.dark ? 0.22 : 0.14,
+      ),
+      cs.surface,
     );
+    final idleIconColor = cs.onSurfaceVariant.withValues(alpha: 0.78);
 
     return InkWell(
       borderRadius: BorderRadius.circular(999),
       onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOutCubic,
-        padding: EdgeInsets.symmetric(
-          horizontal: selected ? 17 : 12,
-          vertical: 7,
-        ),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(999),
-          color: selected ? activeColor : Colors.transparent,
-          boxShadow: selected
-              ? [
-                  BoxShadow(
-                    color: activeColor.withValues(alpha: 0.24),
-                    blurRadius: 18,
-                    offset: const Offset(0, 8),
-                  ),
-                ]
-              : null,
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              selected ? selectedIcon : icon,
-              size: 21,
-              color: selected ? theme.colorScheme.onPrimary : idleColor,
+      child: Tooltip(
+        message: label,
+        child: Semantics(
+          label: label,
+          button: true,
+          selected: selected,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            height: 58,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              color: selected ? selectedBackground : idleColor,
+              border: Border.all(
+                color: selected
+                    ? activeColor.withValues(alpha: 0.42)
+                    : activeColor.withValues(alpha: 0.14),
+              ),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: activeColor.withValues(alpha: 0.16),
+                        blurRadius: 16,
+                        offset: const Offset(0, 7),
+                      ),
+                    ]
+                  : null,
             ),
-            const SizedBox(height: 3),
-            Text(label.toUpperCase(), style: labelStyle),
-          ],
+            child: Center(
+              child: Icon(
+                selected ? selectedIcon : icon,
+                size: 22,
+                color: selected ? activeColor : idleIconColor,
+              ),
+            ),
+          ),
         ),
       ),
     );
   }
 }
 
-class _NavSlot {
-  final String label;
-  final IconData icon;
-  final IconData selectedIcon;
-  final int targetIndex;
+class _BottomCenterCameraButton extends StatelessWidget {
+  const _BottomCenterCameraButton({
+    required this.selected,
+    required this.onTap,
+    required this.color,
+  });
 
-  const _NavSlot({
+  final bool selected;
+  final VoidCallback onTap;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final iconColor = selected
+        ? AppTheme.atelierGreen
+        : cs.onSurfaceVariant.withValues(alpha: 0.84);
+    final selectedBackground = Color.alphaBlend(
+      AppTheme.atelierGreen.withValues(
+        alpha: theme.brightness == Brightness.dark ? 0.18 : 0.1,
+      ),
+      color,
+    );
+
+    return Tooltip(
+      message: Localizations.localeOf(context).languageCode == 'ru'
+          ? 'Анализ'
+          : 'Analyze',
+      child: Semantics(
+        label: Localizations.localeOf(context).languageCode == 'ru'
+            ? 'Анализ'
+            : 'Analyze',
+        button: true,
+        selected: selected,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            width: selected ? 62 : 58,
+            height: selected ? 62 : 58,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: selected ? selectedBackground : color,
+              border: Border.all(
+                color: selected
+                    ? AppTheme.atelierGreen.withValues(alpha: 0.34)
+                    : AppTheme.atelierGreen.withValues(alpha: 0.14),
+              ),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: AppTheme.atelierGreen.withValues(alpha: 0.12),
+                        blurRadius: 14,
+                        offset: const Offset(0, 7),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Icon(
+              selected ? Icons.camera_alt_rounded : Icons.camera_alt_outlined,
+              color: iconColor,
+              size: selected ? 24 : 23,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomNavSlot {
+  const _BottomNavSlot({
     required this.label,
     required this.icon,
     required this.selectedIcon,
     required this.targetIndex,
   });
+
+  final String label;
+  final IconData icon;
+  final IconData selectedIcon;
+  final int targetIndex;
 }

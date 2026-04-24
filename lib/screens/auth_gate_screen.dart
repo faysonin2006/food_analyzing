@@ -21,23 +21,14 @@ class _AuthGateScreenState extends State<AuthGateScreen> {
   }
 
   Future<void> _bootstrap() async {
-    final token = await _repository.getToken();
+    final hasSession = await _repository.hasActiveSession();
     if (!mounted) return;
 
-    if (token == null || token.isEmpty) {
+    if (!hasSession) {
       Navigator.pushReplacementNamed(context, '/login');
       return;
     }
-
-    final profile = await _repository.getProfile();
-    if (!mounted) return;
-
-    if (profile != null) {
-      Navigator.pushReplacementNamed(context, '/home');
-      return;
-    }
-
-    Navigator.pushReplacementNamed(context, '/login');
+    Navigator.pushReplacementNamed(context, '/home');
   }
 
   @override

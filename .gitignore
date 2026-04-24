@@ -3,6 +3,7 @@
 *.log
 *.pyc
 *.swp
+*.docx
 .DS_Store
 .atom/
 .build/
@@ -14,6 +15,13 @@ migrate_working_dir/
 tmp_food_patch/
 tmp_resume/
 out/
+tmp/
+tmp_*/
+outputs/
+backups/
+reports/*.docx
+.kiro/
+.vscode/
 tmp_food_backend_phase1.sh
 tmp/sora/
 
@@ -22,11 +30,6 @@ tmp/sora/
 *.ipr
 *.iws
 .idea/
-
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
 
 # Flutter/Dart/Pub related
 **/doc/api/

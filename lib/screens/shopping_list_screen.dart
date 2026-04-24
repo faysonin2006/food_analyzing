@@ -3,11 +3,12 @@ import 'package:flutter/services.dart';
 
 import '../core/app_feedback.dart';
 import '../core/live_refresh.dart';
-import '../core/app_theme.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
 import '../core/food_suggestions.dart';
 import '../core/suggestion_panel.dart';
+import '../features/product_search/models/product_search_context.dart';
+import '../features/product_search/screens/unified_product_search_screen.dart';
 import '../repositories/app_repository.dart';
 
 class ShoppingListScreen extends StatefulWidget {
@@ -39,7 +40,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen>
     String message, {
     AppFeedbackKind? kind,
     bool preferPopup = false,
-    bool addToInbox = true,
+    bool addToInbox = false,
   }) {
     if (!mounted) return;
     showAppFeedback(
@@ -203,6 +204,97 @@ class _ShoppingListScreenState extends State<ShoppingListScreen>
   }
 
   Future<void> _addItem() async {
+    // Показать выбор способа добавления
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => AtelierSheetFrame(
+        title: _isRu ? 'Добавить покупку' : 'Add shopping item',
+        subtitle: _isRu
+            ? 'Выбери способ добавления продукта в список покупок.'
+            : 'Choose how to add a product to your shopping list.',
+        onClose: () => Navigator.of(context).pop(),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AtelierSurfaceCard(
+              radius: 24,
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                leading: const Icon(Icons.edit_rounded),
+                title: Text(_isRu ? 'Добавить вручную' : 'Add manually'),
+                subtitle: Text(
+                  _isRu
+                      ? 'Введи название и количество самостоятельно.'
+                      : 'Enter name and quantity yourself.',
+                ),
+                onTap: () => Navigator.of(context).pop('manual'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            AtelierSurfaceCard(
+              radius: 24,
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                leading: const Icon(Icons.search_rounded),
+                title: Text(_isRu ? 'Найти в базе продуктов' : 'Search product database'),
+                subtitle: Text(
+                  _isRu
+                      ? 'Поиск среди тысяч продуктов.'
+                      : 'Search among thousands of products.',
+                ),
+                onTap: () => Navigator.of(context).pop('search'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || choice == null) return;
+
+    if (choice == 'search') {
+      await _addItemFromProductSearch();
+    } else {
+      await _addItemManually();
+    }
+  }
+
+  Future<void> _addItemFromProductSearch() async {
+    final selected = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (_) => UnifiedProductSearchScreen(
+          context: ProductSearchContext.shopping,
+          initialQuery: '',
+          onProductSelected: (product) {
+            // Product will be returned via Navigator.pop
+          },
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+
+    // Создать элемент списка покупок из выбранного продукта
+    final name = selected['productName']?.toString().trim() ?? '';
+    if (name.isEmpty) return;
+
+    final result = await repository.createShoppingItem({
+      'name': name,
+      'quantity': 1.0,
+      'unit': null,
+    });
+
+    if (!mounted) return;
+    if (result != null) {
+      await HapticFeedback.lightImpact();
+      setState(() {
+        _items = [result, ..._items];
+      });
+      _listKey.currentState?.insertItem(0, duration: _listAnimationDuration);
+    }
+  }
+
+  Future<void> _addItemManually() async {
     final nameCtrl = TextEditingController();
     final quantityCtrl = TextEditingController(text: '1');
     final unitCtrl = TextEditingController();
@@ -511,23 +603,28 @@ class _ShoppingListScreenState extends State<ShoppingListScreen>
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(_isRu ? 'Удалить купленное?' : 'Delete purchased items?'),
-        content: Text(
-          _isRu
-              ? 'Все отмеченные как купленные позиции будут удалены из списка.'
-              : 'All checked items will be removed from the list.',
+      builder: (dialogContext) => AtelierDialogFrame(
+        title: _isRu ? 'Удалить купленное?' : 'Delete purchased items?',
+        subtitle: _isRu
+            ? 'Все отмеченные как купленные позиции будут удалены из списка.'
+            : 'All checked items will be removed from the list.',
+        child: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(_isRu ? 'Отмена' : 'Cancel'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(_isRu ? 'Удалить' : 'Delete'),
+              ),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(_isRu ? 'Отмена' : 'Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(_isRu ? 'Удалить' : 'Delete'),
-          ),
-        ],
       ),
     );
 
@@ -689,7 +786,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen>
       backgroundColor: _theme.scaffoldBackgroundColor,
       appBar: AppTopBar(
         title: _isRu ? 'Список покупок' : 'Shopping list',
-        actions: [AppTopAction(icon: Icons.refresh_rounded, onPressed: _load)],
+        actions: const [],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _addItem,
@@ -702,18 +799,10 @@ class _ShoppingListScreenState extends State<ShoppingListScreen>
           controller: _scrollController,
           padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
           children: [
-            AtelierHeroCard(
-              eyebrow: 'The Organic Atelier',
-              title: _isRu ? 'Список\nпокупок' : 'Shopping\nqueue',
-              subtitle: _isRu
-                  ? 'Держи под рукой активные и завершенные позиции в одном ритме.'
-                  : 'Keep active and completed items in one calm flow.',
-              gradientColors: [
-                _cs.primary.withValues(alpha: 0.14),
-                AppTheme.atelierLime.withValues(alpha: 0.18),
-                AppTheme.atelierHoney.withValues(alpha: 0.08),
-              ],
-              pills: [
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
                 AtelierStatPill(
                   icon: Icons.shopping_bag_rounded,
                   label: _isRu
@@ -728,15 +817,7 @@ class _ShoppingListScreenState extends State<ShoppingListScreen>
                 ),
               ],
             ),
-            const SizedBox(height: 28),
-            AtelierSectionIntro(
-              eyebrow: _isRu ? 'покупки' : 'shopping',
-              title: _isRu ? 'Что в списке' : 'What is queued',
-              subtitle: _isRu
-                  ? 'Отмечай купленное быстро и держи список чистым.'
-                  : 'Mark things done quickly and keep the list clean.',
-            ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 18),
             if (doneCount > 0) ...[
               Align(
                 alignment: Alignment.centerLeft,

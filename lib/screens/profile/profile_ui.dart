@@ -6,6 +6,63 @@ extension _ProfileScreenUi on _ProfileScreenState {
     return whole ? value.toStringAsFixed(0) : value.toStringAsFixed(1);
   }
 
+  Widget _buildEditorFieldLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, bottom: 10),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: _cs.onSurface,
+          fontSize: 16.5,
+          fontWeight: FontWeight.w800,
+          height: 1.0,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEditorSectionCard({
+    required IconData icon,
+    required String title,
+    String? subtitle,
+    required Color accent,
+    required Widget child,
+  }) {
+    return AtelierSurfaceCard(
+      radius: 26,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AtelierIconBadge(icon: icon, accent: accent, size: 38),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: _cs.onSurface,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          child,
+        ],
+      ),
+    );
+  }
+
   Widget _buildMetricPickerValueCard({
     String? caption,
     required String value,
@@ -192,27 +249,36 @@ extension _ProfileScreenUi on _ProfileScreenState {
     required String decreaseLabel,
     required String increaseLabel,
   }) {
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: onDecrease,
-            icon: const Icon(Icons.remove_rounded),
-            label: Text(decreaseLabel),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          flex: 2,
-          child: _buildMetricPickerValueCard(value: value, accent: accent),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: onIncrease,
-            icon: const Icon(Icons.add_rounded),
-            label: Text(increaseLabel),
-          ),
+        _buildMetricPickerValueCard(value: value, accent: accent),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: onDecrease,
+                icon: const Icon(Icons.remove_rounded),
+                label: Text(
+                  decreaseLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: onIncrease,
+                icon: const Icon(Icons.add_rounded),
+                label: Text(
+                  increaseLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -472,214 +538,321 @@ extension _ProfileScreenUi on _ProfileScreenState {
         child: StatefulBuilder(
           builder: (context, setModalState) => AtelierSheetFrame(
             title: tr(context, 'edit_profile_title'),
+            subtitle: _isRu
+                ? 'Обнови ключевые данные, чтобы рекомендации и цели оставались точными.'
+                : 'Refresh the essentials so your targets and recommendations stay accurate.',
             onClose: () => Navigator.pop(context),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                AtelierFieldLabel(tr(context, 'name')),
-                TextField(
-                  controller: _nameController,
-                  onTapOutside: (_) =>
-                      FocusManager.instance.primaryFocus?.unfocus(),
-                  decoration: InputDecoration(
-                    hintText: _isRu ? 'Ваше имя' : 'Your name',
-                    prefixIcon: Icon(Icons.person, color: _cs.primary),
+                _buildEditorSectionCard(
+                  icon: Icons.person_rounded,
+                  title: _isRu ? 'Личные данные' : 'Personal details',
+                  subtitle: _isRu
+                      ? 'Имя, дата рождения и пол для персональных рекомендаций.'
+                      : 'Name, birthday, and gender for more personal guidance.',
+                  accent: _cs.primary,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildEditorFieldLabel(tr(context, 'name')),
+                      TextField(
+                        controller: _nameController,
+                        onTapOutside: (_) =>
+                            FocusManager.instance.primaryFocus?.unfocus(),
+                        decoration: InputDecoration(
+                          hintText: _isRu ? 'Ваше имя' : 'Your name',
+                          prefixIcon: Icon(Icons.person, color: _cs.primary),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildEditorFieldLabel(tr(context, 'date_of_birth')),
+                      TextField(
+                        controller: _dobController,
+                        readOnly: true,
+                        onTap: () => _pickDateOfBirth(context, setModalState),
+                        decoration: InputDecoration(
+                          hintText: _isRu ? 'Выберите дату' : 'Choose a date',
+                          prefixIcon: Icon(
+                            Icons.cake_rounded,
+                            color: _cs.primary,
+                          ),
+                          suffixIcon: IconButton(
+                            icon: const Icon(Icons.calendar_month_rounded),
+                            onPressed: () =>
+                                _pickDateOfBirth(context, setModalState),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _buildEditorFieldLabel(tr(context, 'gender')),
+                      _buildDropdownField(
+                        tr(context, 'gender'),
+                        ['MALE', 'FEMALE'],
+                        _selectedGender,
+                        (value) => setModalState(() => _selectedGender = value),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 16),
-
-                AtelierFieldLabel(tr(context, 'date_of_birth')),
-                TextField(
-                  controller: _dobController,
-                  readOnly: true,
-                  onTap: () => _pickDateOfBirth(context, setModalState),
-                  decoration: InputDecoration(
-                    hintText: _isRu ? 'Выберите дату' : 'Choose a date',
-                    prefixIcon: Icon(Icons.cake_rounded, color: _cs.primary),
-                    suffixIcon: IconButton(
-                      icon: const Icon(Icons.calendar_month_rounded),
-                      onPressed: () => _pickDateOfBirth(context, setModalState),
-                    ),
+                _buildEditorSectionCard(
+                  icon: Icons.straighten_rounded,
+                  title: _isRu ? 'Параметры тела' : 'Body metrics',
+                  subtitle: _isRu
+                      ? 'Рост и вес нужны для точных калорий и БЖУ.'
+                      : 'Height and weight keep calories and macros accurate.',
+                  accent: _cs.secondary,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildEditorFieldLabel(tr(context, 'height_cm')),
+                            TextField(
+                              controller: _heightController,
+                              onTapOutside: (_) =>
+                                  FocusManager.instance.primaryFocus?.unfocus(),
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: false,
+                                  ),
+                              textInputAction: TextInputAction.next,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.allow(
+                                  RegExp(r'[0-9]'),
+                                ),
+                              ],
+                              decoration: InputDecoration(
+                                hintText: _isRu
+                                    ? 'Например, 175'
+                                    : 'For example, 175',
+                                prefixIcon: Icon(
+                                  Icons.height,
+                                  color: _cs.secondary,
+                                ),
+                                suffixIcon: IconButton(
+                                  icon: const Icon(Icons.tune_rounded),
+                                  onPressed: () =>
+                                      _pickHeight(context, setModalState),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildEditorFieldLabel(tr(context, 'weight_kg')),
+                            TextField(
+                              controller: _weightController,
+                              onTapOutside: (_) =>
+                                  FocusManager.instance.primaryFocus?.unfocus(),
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                              textInputAction: TextInputAction.done,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.allow(
+                                  RegExp(r'[0-9,.]'),
+                                ),
+                              ],
+                              decoration: InputDecoration(
+                                hintText: _isRu
+                                    ? 'Например, 75,3'
+                                    : 'For example, 75.3',
+                                prefixIcon: Icon(
+                                  Icons.monitor_weight_rounded,
+                                  color: _cs.secondary,
+                                ),
+                                suffixIcon: IconButton(
+                                  icon: const Icon(Icons.tune_rounded),
+                                  onPressed: () =>
+                                      _pickWeight(context, setModalState),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 16),
-
-                _buildDropdownField(
-                  tr(context, 'gender'),
-                  ['MALE', 'FEMALE'],
-                  _selectedGender,
-                  (value) => setModalState(() => _selectedGender = value),
-                ),
-                const SizedBox(height: 16),
-
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          AtelierFieldLabel(tr(context, 'height_cm')),
-                          TextField(
-                            controller: _heightController,
-                            readOnly: true,
-                            onTap: () => _pickHeight(context, setModalState),
-                            decoration: InputDecoration(
-                              hintText: _isRu ? 'Выбери рост' : 'Choose height',
-                              prefixIcon: Icon(
-                                Icons.height,
-                                color: _cs.primary,
-                              ),
-                              suffixIcon: const Icon(Icons.tune_rounded),
-                            ),
-                          ),
+                _buildEditorSectionCard(
+                  icon: Icons.tune_rounded,
+                  title: _isRu ? 'Режим и цель' : 'Routine and goal',
+                  subtitle: _isRu
+                      ? 'Это влияет на дневную норму и рекомендации.'
+                      : 'These drive your daily targets and recommendations.',
+                  accent: _cs.tertiary,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildEditorFieldLabel(tr(context, 'activity_level')),
+                      _buildDropdownField(
+                        tr(context, 'activity_level'),
+                        [
+                          'SEDENTARY',
+                          'LIGHTLY_ACTIVE',
+                          'MODERATELY_ACTIVE',
+                          'VERY_ACTIVE',
+                          'EXTRA_ACTIVE',
                         ],
+                        _selectedActivity,
+                        (value) =>
+                            setModalState(() => _selectedActivity = value),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          AtelierFieldLabel(tr(context, 'weight_kg')),
-                          TextField(
-                            controller: _weightController,
-                            readOnly: true,
-                            onTap: () => _pickWeight(context, setModalState),
-                            decoration: InputDecoration(
-                              hintText: _isRu ? 'Выбери вес' : 'Choose weight',
-                              prefixIcon: Icon(
-                                Icons.monitor_weight_rounded,
-                                color: _cs.primary,
-                              ),
-                              suffixIcon: const Icon(Icons.tune_rounded),
-                            ),
-                          ),
-                        ],
+                      const SizedBox(height: 16),
+                      _buildEditorFieldLabel(tr(context, 'goal_type')),
+                      _buildDropdownField(
+                        tr(context, 'goal_type'),
+                        ['LOSE_WEIGHT', 'MAINTAIN_WEIGHT', 'GAIN_MUSCLE'],
+                        _selectedGoal,
+                        (value) => setModalState(() => _selectedGoal = value),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 16),
-
-                _buildDropdownField(
-                  tr(context, 'activity_level'),
-                  [
-                    'SEDENTARY',
-                    'LIGHTLY_ACTIVE',
-                    'MODERATELY_ACTIVE',
-                    'VERY_ACTIVE',
-                    'EXTRA_ACTIVE',
-                  ],
-                  _selectedActivity,
-                  (value) => setModalState(() => _selectedActivity = value),
+                _buildEditorSectionCard(
+                  icon: Icons.restaurant_menu_rounded,
+                  title: tr(context, 'diet_preferences'),
+                  subtitle: _isRu
+                      ? 'Выбери образ питания, чтобы лента и советы были релевантнее.'
+                      : 'Pick how you eat so feeds and tips stay relevant.',
+                  accent: _cs.primary,
+                  child: _buildMultiSelectCard(
+                    tr(context, 'diet_preferences'),
+                    [
+                      'VEGETARIAN',
+                      'VEGAN',
+                      'PESCATARIAN',
+                      'KETO',
+                      'PALEO',
+                      'HALAL',
+                      'KOSHER',
+                      'GLUTEN_FREE',
+                      'LACTOSE_FREE',
+                      'OMNIVORE',
+                    ],
+                    _selectedDietPrefs,
+                    (item, selected) {
+                      setModalState(() {
+                        if (selected) {
+                          _selectedDietPrefs.add(item);
+                        } else {
+                          _selectedDietPrefs.remove(item);
+                        }
+                      });
+                    },
+                    showTitle: false,
+                  ),
                 ),
                 const SizedBox(height: 16),
-
-                _buildDropdownField(
-                  tr(context, 'goal_type'),
-                  ['LOSE_WEIGHT', 'MAINTAIN_WEIGHT', 'GAIN_MUSCLE'],
-                  _selectedGoal,
-                  (value) => setModalState(() => _selectedGoal = value),
+                _buildEditorSectionCard(
+                  icon: Icons.warning_amber_rounded,
+                  title: tr(context, 'allergies'),
+                  subtitle: _isRu
+                      ? 'Отмеченные аллергены будут подсвечиваться в анализе.'
+                      : 'Marked allergens will be highlighted in analysis.',
+                  accent: _cs.error,
+                  child: _buildMultiSelectCard(
+                    tr(context, 'allergies'),
+                    [
+                      'GLUTEN',
+                      'LACTOSE',
+                      'TREE_NUTS',
+                      'PEANUTS',
+                      'EGGS',
+                      'SOY',
+                      'FISH',
+                      'SHELLFISH',
+                      'MUSTARD',
+                      'SESAME',
+                    ],
+                    _selectedAllergies,
+                    (item, selected) {
+                      setModalState(() {
+                        if (selected) {
+                          _selectedAllergies.add(item);
+                        } else {
+                          _selectedAllergies.remove(item);
+                        }
+                      });
+                    },
+                    showTitle: false,
+                  ),
                 ),
                 const SizedBox(height: 16),
-
-                _buildMultiSelectCard(
-                  tr(context, 'diet_preferences'),
-                  [
-                    'VEGETARIAN',
-                    'VEGAN',
-                    'PESCATARIAN',
-                    'KETO',
-                    'PALEO',
-                    'HALAL',
-                    'KOSHER',
-                    'GLUTEN_FREE',
-                    'LACTOSE_FREE',
-                    'OMNIVORE',
-                  ],
-                  _selectedDietPrefs,
-                  (item, selected) {
-                    setModalState(() {
-                      if (selected) {
-                        _selectedDietPrefs.add(item);
-                      } else {
-                        _selectedDietPrefs.remove(item);
-                      }
-                    });
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                _buildMultiSelectCard(
-                  tr(context, 'allergies'),
-                  [
-                    'GLUTEN',
-                    'LACTOSE',
-                    'TREE_NUTS',
-                    'PEANUTS',
-                    'EGGS',
-                    'SOY',
-                    'FISH',
-                    'SHELLFISH',
-                    'MUSTARD',
-                    'SESAME',
-                  ],
-                  _selectedAllergies,
-                  (item, selected) {
-                    setModalState(() {
-                      if (selected) {
-                        _selectedAllergies.add(item);
-                      } else {
-                        _selectedAllergies.remove(item);
-                      }
-                    });
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                _buildMultiSelectCard(
-                  tr(context, 'health_conditions'),
-                  [
-                    'DIABETES_TYPE_1',
-                    'DIABETES_TYPE_2',
-                    'INSULIN_RESISTANCE',
-                    'GASTRITIS',
-                    'HYPERTENSION',
-                    'HIGH_CHOLESTEROL',
-                    'PREGNANCY',
-                    'GOUT',
-                    'KIDNEY_DISEASE',
-                    'CELIAC_DISEASE',
-                  ],
-                  _selectedHealthConditions,
-                  (item, selected) {
-                    setModalState(() {
-                      if (selected) {
-                        _selectedHealthConditions.add(item);
-                      } else {
-                        _selectedHealthConditions.remove(item);
-                      }
-                    });
-                  },
+                _buildEditorSectionCard(
+                  icon: Icons.health_and_safety_rounded,
+                  title: tr(context, 'health_conditions'),
+                  subtitle: _isRu
+                      ? 'Это поможет корректнее считать цели и фильтровать еду.'
+                      : 'This helps tune targets and food filtering more carefully.',
+                  accent: _cs.tertiary,
+                  child: _buildMultiSelectCard(
+                    tr(context, 'health_conditions'),
+                    [
+                      'DIABETES_TYPE_1',
+                      'DIABETES_TYPE_2',
+                      'INSULIN_RESISTANCE',
+                      'GASTRITIS',
+                      'HYPERTENSION',
+                      'HIGH_CHOLESTEROL',
+                      'PREGNANCY',
+                      'GOUT',
+                      'KIDNEY_DISEASE',
+                      'CELIAC_DISEASE',
+                    ],
+                    _selectedHealthConditions,
+                    (item, selected) {
+                      setModalState(() {
+                        if (selected) {
+                          _selectedHealthConditions.add(item);
+                        } else {
+                          _selectedHealthConditions.remove(item);
+                        }
+                      });
+                    },
+                    showTitle: false,
+                  ),
                 ),
                 const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: Text(tr(context, 'cancel')),
+                AtelierSurfaceCard(
+                  radius: 24,
+                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(54),
+                          ),
+                          onPressed: () => Navigator.pop(context),
+                          child: Text(tr(context, 'cancel')),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      flex: 2,
-                      child: FilledButton(
-                        onPressed: () => _saveProfile(context),
-                        child: Text(tr(context, 'save')),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(54),
+                          ),
+                          onPressed: () => _saveProfile(context),
+                          icon: const Icon(Icons.check_rounded),
+                          label: Text(tr(context, 'save')),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -787,11 +960,24 @@ extension _ProfileScreenUi on _ProfileScreenState {
   ) {
     return DropdownButtonFormField<String>(
       decoration: InputDecoration(
-        labelText: label,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        prefixIcon: Icon(Icons.arrow_drop_down, color: _cs.primary),
+        hintText: _isRu ? 'Выберите вариант' : 'Choose an option',
+        filled: true,
+        fillColor: _cs.surface.withValues(alpha: _isDarkTheme ? 0.42 : 0.78),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(18)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(
+            color: _cs.outlineVariant.withValues(alpha: 0.34),
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(color: _cs.primary.withValues(alpha: 0.55)),
+        ),
+        prefixIcon: Icon(Icons.unfold_more_rounded, color: _cs.primary),
       ),
       initialValue: selected,
+      isExpanded: true,
       items: items
           .map(
             (value) => DropdownMenuItem<String>(
@@ -808,40 +994,48 @@ extension _ProfileScreenUi on _ProfileScreenState {
     String title,
     List<String> items,
     Set<String> selectedItems,
-    Function(String, bool) onToggle,
-  ) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: items
-                  .map(
-                    (item) => FilterChip(
-                      label: Text(_enumLabel(item)),
-                      selected: selectedItems.contains(item),
-                      onSelected: (selected) => onToggle(item, selected),
-                      selectedColor: _blendWithSurface(
-                        _cs.primary,
-                        _isDarkTheme ? 0.3 : 0.15,
-                      ),
-                      checkmarkColor: _cs.primary,
-                    ),
-                  )
-                  .toList(),
-            ),
-          ],
+    Function(String, bool) onToggle, {
+    bool showTitle = true,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (showTitle) ...[
+          Text(
+            title,
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 12),
+        ],
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: items
+              .map(
+                (item) => FilterChip(
+                  label: Text(_enumLabel(item)),
+                  selected: selectedItems.contains(item),
+                  onSelected: (selected) => onToggle(item, selected),
+                  selectedColor: _blendWithSurface(
+                    _cs.primary,
+                    _isDarkTheme ? 0.3 : 0.15,
+                  ),
+                  backgroundColor: _cs.surface.withValues(
+                    alpha: _isDarkTheme ? 0.42 : 0.78,
+                  ),
+                  side: BorderSide(
+                    color: _cs.outlineVariant.withValues(alpha: 0.28),
+                  ),
+                  checkmarkColor: _cs.primary,
+                  labelStyle: TextStyle(
+                    color: _cs.onSurface,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              )
+              .toList(),
         ),
-      ),
+      ],
     );
   }
 
@@ -1163,6 +1357,15 @@ extension _ProfileScreenUi on _ProfileScreenState {
     final email = (_profile?['email'] ?? '').toString().trim();
     final goal = _enumLabel(_profile?['goalType']?.toString());
     final activity = _enumLabel(_profile?['activityLevel']?.toString());
+    final heroNameFontSize = name.length >= 38
+        ? 16.0
+        : name.length >= 28
+        ? 18.0
+        : name.length >= 20
+        ? 22.0
+        : 26.0;
+    final heroNameLineHeight = name.length >= 28 ? 1.12 : 1.05;
+    final heroNameLetterSpacing = name.length >= 28 ? -0.4 : -0.2;
 
     final avatarUrl = _resolveAvatarUrl();
     final ImageProvider? avatarImage = _profileAvatarFile != null
@@ -1234,6 +1437,74 @@ extension _ProfileScreenUi on _ProfileScreenState {
               ? '-${_formatWeightValue(rangeDelta.abs())} кг за $_selectedWeightPeriodDays дн.'
               : '-${_formatWeightValue(rangeDelta.abs())} kg in $_selectedWeightPeriodDays days');
 
+    Widget heroInfoCard({
+      required IconData icon,
+      required String label,
+      required String value,
+      required Color accent,
+    }) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: _cs.surface.withValues(alpha: _isDarkTheme ? 0.5 : 0.88),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+            color: accent.withValues(alpha: _isDarkTheme ? 0.24 : 0.16),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: _isDarkTheme ? 0.18 : 0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              alignment: Alignment.center,
+              child: Icon(icon, size: 18, color: accent),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: cs.onSurfaceVariant,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    height: 22,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        value,
+                        style: TextStyle(
+                          color: _cs.onSurface,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                          height: 1.05,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1268,124 +1539,206 @@ extension _ProfileScreenUi on _ProfileScreenState {
                 ),
               ),
               const SizedBox(height: 10),
-              const SizedBox(height: 6),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Stack(
-                    children: [
-                      CircleAvatar(
-                        radius: 58,
-                        backgroundColor: _blendWithSurface(
+              if (_isLoadingProfile)
+                const LinearProgressIndicator(minHeight: 6)
+              else ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 15),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        _blendWithSurface(
                           accentPrimary,
-                          _isDarkTheme ? 0.34 : 0.16,
+                          _isDarkTheme ? 0.3 : 0.15,
                         ),
-                        backgroundImage: avatarImage,
-                        child: avatarImage == null
-                            ? Icon(
-                                Icons.person_rounded,
-                                size: 60,
-                                color: accentPrimary.withValues(alpha: 0.8),
-                              )
-                            : null,
+                        _cs.surface.withValues(
+                          alpha: _isDarkTheme ? 0.58 : 0.88,
+                        ),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(26),
+                    border: Border.all(
+                      color: accentPrimary.withValues(
+                        alpha: _isDarkTheme ? 0.32 : 0.2,
                       ),
-                      Positioned(
-                        bottom: -2,
-                        right: -2,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppTheme.atelierLime,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            _isRu ? 'PRO' : 'PRO',
-                            style: const TextStyle(
-                              color: Color(0xFF365C00),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 0.8,
-                            ),
-                          ),
+                      width: 1.2,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: heroNameFontSize,
+                          fontWeight: FontWeight.w900,
+                          height: heroNameLineHeight,
+                          letterSpacing: heroNameLetterSpacing,
+                          color: _cs.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        email.isEmpty
+                            ? (_isRu ? 'Почта не указана' : 'Email not set')
+                            : email,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: cs.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(width: 18),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (_isLoadingProfile)
-                          const LinearProgressIndicator(minHeight: 6)
-                        else ...[
-                          Text(
-                            name,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 30,
-                              fontWeight: FontWeight.w900,
-                              height: 0.98,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            email.isEmpty
-                                ? (_isRu ? 'Почта не указана' : 'Email not set')
-                                : email,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: cs.onSurfaceVariant,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              _buildProfileHeroChip(
-                                icon: Icons.local_fire_department_rounded,
-                                text: _getCaloriesDisplayText(_profile),
-                                accent: accentPrimary,
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    GestureDetector(
+                      onTap: () => _pickProfileAvatar(ImageSource.gallery),
+                      behavior: HitTestBehavior.opaque,
+                      child: SizedBox(
+                        width: 132,
+                        height: 132,
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Positioned.fill(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: accentPrimary.withValues(
+                                      alpha: _isDarkTheme ? 0.48 : 0.26,
+                                    ),
+                                    width: 2.4,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(
+                                        alpha: _isDarkTheme ? 0.22 : 0.08,
+                                      ),
+                                      blurRadius: 22,
+                                      offset: const Offset(0, 10),
+                                    ),
+                                  ],
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(4),
+                                  child: ClipOval(
+                                    child: ColoredBox(
+                                      color: _cs.surfaceContainerHighest
+                                          .withValues(
+                                            alpha: _isDarkTheme ? 0.88 : 0.95,
+                                          ),
+                                      child: avatarImage == null
+                                          ? Center(
+                                              child: Icon(
+                                                Icons.person_rounded,
+                                                size: 60,
+                                                color: accentPrimary.withValues(
+                                                  alpha: 0.94,
+                                                ),
+                                              ),
+                                            )
+                                          : Image(
+                                              image: avatarImage,
+                                              fit: BoxFit.cover,
+                                            ),
+                                    ),
+                                  ),
+                                ),
                               ),
-                              _buildProfileHeroChip(
-                                icon: Icons.flag_rounded,
-                                text: goal,
-                                accent: accentSecondary,
+                            ),
+                            Positioned(
+                              right: -2,
+                              bottom: -2,
+                              child: Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: Color.alphaBlend(
+                                    _blendWithSurface(
+                                      accentPrimary,
+                                      _isDarkTheme ? 0.3 : 0.14,
+                                    ),
+                                    _cs.surface,
+                                  ),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: _cs.surface,
+                                    width: 2,
+                                  ),
+                                ),
+                                alignment: Alignment.center,
+                                child: Icon(
+                                  Icons.photo_camera_rounded,
+                                  size: 18,
+                                  color: accentPrimary,
+                                ),
                               ),
-                            ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          heroInfoCard(
+                            icon: Icons.local_fire_department_rounded,
+                            label: _isRu ? 'Калории' : 'Calories',
+                            value: _getCaloriesDisplayText(_profile),
+                            accent: accentPrimary,
+                          ),
+                          const SizedBox(height: 10),
+                          heroInfoCard(
+                            icon: Icons.flag_rounded,
+                            label: _isRu ? 'Цель' : 'Goal',
+                            value: goal,
+                            accent: accentSecondary,
                           ),
                         ],
-                      ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(62),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 18,
+                      ),
+                      alignment: Alignment.centerLeft,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                    ),
+                    onPressed: _showEditProfileDialog,
+                    icon: const Icon(Icons.edit_rounded, size: 22),
+                    label: Text(
+                      tr(context, 'edit_profile'),
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: _showEditProfileDialog,
-                      icon: const Icon(Icons.edit_rounded),
-                      label: Text(tr(context, 'edit_profile')),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _pickProfileAvatar(ImageSource.gallery),
-                      icon: const Icon(Icons.photo_camera_rounded),
-                      label: Text(_isRu ? 'Аватар' : 'Avatar'),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ],
           ),
         ),
@@ -1581,117 +1934,129 @@ extension _ProfileScreenUi on _ProfileScreenState {
                             curve: Curves.easeOutCubic,
                             builder: (context, progress, _) => SizedBox(
                               height: 164,
-                              child: LayoutBuilder(
-                                builder: (context, constraints) {
-                                  final width = constraints.maxWidth;
-                                  final tooltipWidth = math.min(166.0, width);
-                                  final tooltipLeft =
-                                      selectedWeightIndex == null
-                                      ? 0.0
-                                      : (_chartXForIndex(
-                                                  selectedWeightIndex,
-                                                  weightSeries.length,
-                                                  width,
-                                                ) -
-                                                tooltipWidth / 2)
-                                            .clamp(
-                                              0.0,
-                                              math.max(
-                                                0.0,
-                                                width - tooltipWidth,
-                                              ),
-                                            )
-                                            .toDouble();
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildWeightChartYAxis(weightSeries),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: LayoutBuilder(
+                                      builder: (context, constraints) {
+                                        final width = constraints.maxWidth;
+                                        final tooltipWidth = math.min(
+                                          166.0,
+                                          width,
+                                        );
+                                        final tooltipLeft =
+                                            selectedWeightIndex == null
+                                            ? 0.0
+                                            : (_chartXForIndex(
+                                                        selectedWeightIndex,
+                                                        weightSeries.length,
+                                                        width,
+                                                      ) -
+                                                      tooltipWidth / 2)
+                                                  .clamp(
+                                                    0.0,
+                                                    math.max(
+                                                      0.0,
+                                                      width - tooltipWidth,
+                                                    ),
+                                                  )
+                                                  .toDouble();
 
-                                  void selectAtOffset(Offset localPosition) {
-                                    _setSelectedWeightPointIndex(
-                                      _chartIndexForDx(
-                                        localPosition.dx,
-                                        weightSeries.length,
-                                        width,
-                                      ),
-                                    );
-                                  }
+                                        void selectAtOffset(
+                                          Offset localPosition,
+                                        ) {
+                                          _setSelectedWeightPointIndex(
+                                            _chartIndexForDx(
+                                              localPosition.dx,
+                                              weightSeries.length,
+                                              width,
+                                            ),
+                                          );
+                                        }
 
-                                  return GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onTapDown: (details) =>
-                                        selectAtOffset(details.localPosition),
-                                    onHorizontalDragStart: (details) =>
-                                        selectAtOffset(details.localPosition),
-                                    onHorizontalDragUpdate: (details) =>
-                                        selectAtOffset(details.localPosition),
-                                    child: Stack(
-                                      children: [
-                                        CustomPaint(
-                                          painter: _WeightSparklinePainter(
-                                            points: weightSeries,
-                                            progress: progress,
-                                            selectedIndex: selectedWeightIndex,
-                                            lineColor: accentPrimary,
-                                            fillColor: accentPrimary.withValues(
-                                              alpha: 0.22,
-                                            ),
-                                            todayColor: accentSecondary,
-                                            gridColor: cs.outlineVariant
-                                                .withValues(alpha: 0.22),
-                                            inactiveColor: cs.outlineVariant
-                                                .withValues(alpha: 0.42),
-                                            selectionColor: accentSecondary,
-                                          ),
-                                          child: const SizedBox.expand(),
-                                        ),
-                                        if (selectedWeightIndex != null)
-                                          Positioned(
-                                            left: tooltipLeft,
-                                            top: 0,
-                                            width: tooltipWidth,
-                                            child: _buildWeightChartTooltip(
-                                              title: _weightTooltipDate(
-                                                weightSeries[selectedWeightIndex]
-                                                    .date,
+                                        return GestureDetector(
+                                          behavior: HitTestBehavior.opaque,
+                                          onTapDown: (details) =>
+                                              selectAtOffset(
+                                                details.localPosition,
                                               ),
-                                              value:
-                                                  weightSeries[selectedWeightIndex]
-                                                          .weight ==
-                                                      null
-                                                  ? (_isRu
-                                                        ? 'Нет записи'
-                                                        : 'No entry')
-                                                  : '${_formatWeightValue(weightSeries[selectedWeightIndex].weight!)} ${_isRu ? 'кг' : 'kg'}',
-                                              accent: accentPrimary,
-                                            ),
+                                          onHorizontalDragStart: (details) =>
+                                              selectAtOffset(
+                                                details.localPosition,
+                                              ),
+                                          onHorizontalDragUpdate: (details) =>
+                                              selectAtOffset(
+                                                details.localPosition,
+                                              ),
+                                          child: Stack(
+                                            children: [
+                                              CustomPaint(
+                                                painter:
+                                                    _WeightSparklinePainter(
+                                                      points: weightSeries,
+                                                      progress: progress,
+                                                      selectedIndex:
+                                                          selectedWeightIndex,
+                                                      lineColor: accentPrimary,
+                                                      fillColor: accentPrimary
+                                                          .withValues(
+                                                            alpha: 0.22,
+                                                          ),
+                                                      todayColor:
+                                                          accentSecondary,
+                                                      gridColor: cs
+                                                          .outlineVariant
+                                                          .withValues(
+                                                            alpha: 0.22,
+                                                          ),
+                                                      inactiveColor: cs
+                                                          .outlineVariant
+                                                          .withValues(
+                                                            alpha: 0.42,
+                                                          ),
+                                                      selectionColor:
+                                                          accentSecondary,
+                                                    ),
+                                                child: const SizedBox.expand(),
+                                              ),
+                                              if (selectedWeightIndex != null)
+                                                Positioned(
+                                                  left: tooltipLeft,
+                                                  top: 0,
+                                                  width: tooltipWidth,
+                                                  child: _buildWeightChartTooltip(
+                                                    title: _weightTooltipDate(
+                                                      weightSeries[selectedWeightIndex]
+                                                          .date,
+                                                    ),
+                                                    value:
+                                                        weightSeries[selectedWeightIndex]
+                                                                .weight ==
+                                                            null
+                                                        ? (_isRu
+                                                              ? 'Нет записи'
+                                                              : 'No entry')
+                                                        : '${_formatWeightValue(weightSeries[selectedWeightIndex].weight!)} ${_isRu ? 'кг' : 'kg'}',
+                                                    accent: accentPrimary,
+                                                  ),
+                                                ),
+                                            ],
                                           ),
-                                      ],
+                                        );
+                                      },
                                     ),
-                                  );
-                                },
+                                  ),
+                                ],
                               ),
                             ),
                           ),
                           const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              for (
-                                var index = 0;
-                                index < weightSeries.length;
-                                index++
-                              )
-                                Expanded(
-                                  child: Text(
-                                    _weightChartLabel(
-                                      weightSeries[index].date,
-                                      index,
-                                      weightSeries.length,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: cs.onSurfaceVariant,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                            ],
+                          Padding(
+                            padding: const EdgeInsets.only(left: 64),
+                            child: _buildWeightChartAxisLabels(weightSeries),
                           ),
                         ],
                       ),
@@ -1875,6 +2240,116 @@ extension _ProfileScreenUi on _ProfileScreenState {
       ],
     );
   }
+
+  List<int> _weightAxisIndices(int total) {
+    if (total <= 1) return const [0];
+    if (total <= 7) return List<int>.generate(total, (index) => index);
+    if (total <= 30) {
+      final indices = <int>{0, total ~/ 3, (total * 2) ~/ 3, total - 1};
+      return indices.toList()..sort();
+    }
+    final indices = <int>{0, total ~/ 2, total - 1};
+    return indices.toList()..sort();
+  }
+
+  List<double> _weightYAxisTicks(List<_WeightDayPoint> weightSeries) {
+    final values = weightSeries
+        .where((point) => point.weight != null)
+        .map((point) => point.weight!)
+        .toList(growable: false);
+    if (values.isEmpty) {
+      return const [0, 0, 0];
+    }
+    final minValue = values.reduce(math.min);
+    final maxValue = values.reduce(math.max);
+    final padding = math.max((maxValue - minValue) * 0.35, 0.6);
+    final low = minValue - padding;
+    final high = maxValue + padding;
+    final mid = (low + high) / 2;
+    return [high, mid, low];
+  }
+
+  Widget _buildWeightChartYAxis(List<_WeightDayPoint> weightSeries) {
+    final labels = _weightYAxisTicks(
+      weightSeries,
+    ).map((value) => _formatWeightValue(value)).toList(growable: false);
+    return Container(
+      width: 52,
+      height: 164,
+      padding: const EdgeInsets.only(top: 12, bottom: 14, right: 10),
+      decoration: BoxDecoration(
+        border: Border(
+          right: BorderSide(color: _cs.outlineVariant.withValues(alpha: 0.18)),
+        ),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: labels
+            .map(
+              (label) => Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.fade,
+                softWrap: false,
+                style: TextStyle(
+                  color: _cs.onSurfaceVariant.withValues(alpha: 0.84),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+
+  Widget _buildWeightChartAxisLabels(List<_WeightDayPoint> weightSeries) {
+    return SizedBox(
+      height: 26,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          final indices = _weightAxisIndices(weightSeries.length);
+          final labelWidth = weightSeries.length <= 7 ? 42.0 : 58.0;
+
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              for (final index in indices)
+                Positioned(
+                  left:
+                      (_chartXForIndex(index, weightSeries.length, width) -
+                              labelWidth / 2)
+                          .clamp(0.0, math.max(0.0, width - labelWidth))
+                          .toDouble(),
+                  width: labelWidth,
+                  child: SizedBox(
+                    height: 18,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        _weightChartLabel(
+                          weightSeries[index].date,
+                          index,
+                          weightSeries.length,
+                        ),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: _cs.onSurfaceVariant,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
 }
 
 Path _buildWeightInterpolatedPath(List<Offset> points) {
@@ -1906,12 +2381,14 @@ Path _buildWeightInterpolatedPath(List<Offset> points) {
       next.dx - (following.dx - current.dx) / 6,
       next.dy - (following.dy - current.dy) / 6,
     );
+    final segmentMinY = math.min(current.dy, next.dy);
+    final segmentMaxY = math.max(current.dy, next.dy);
 
     path.cubicTo(
       controlPoint1.dx,
-      controlPoint1.dy,
+      controlPoint1.dy.clamp(segmentMinY, segmentMaxY).toDouble(),
       controlPoint2.dx,
-      controlPoint2.dy,
+      controlPoint2.dy.clamp(segmentMinY, segmentMaxY).toDouble(),
       next.dx,
       next.dy,
     );
@@ -1973,7 +2450,7 @@ class _WeightSparklinePainter extends CustomPainter {
     double xFor(int index) {
       return points.length == 1
           ? size.width / 2
-          : size.width * (index / (points.length - 1));
+          : (size.width / points.length) * (index + 0.5);
     }
 
     final todayIndex = points.indexWhere(

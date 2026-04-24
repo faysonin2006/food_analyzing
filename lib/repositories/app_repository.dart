@@ -1,4 +1,5 @@
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter/foundation.dart';
 
 import '../local/search_history_local_db.dart';
 import '../features/recipes/models/models.dart';
@@ -14,6 +15,11 @@ class AppRepository {
 
   Future<String?> getToken() => _api.getToken();
   Future<void> logout() => _api.logout();
+  ValueListenable<int> get authSignal => _api.authSignal;
+  ValueListenable<int> get mealSignal => _api.mealSignal;
+  Map<String, dynamic>? get latestMealSignalPayload =>
+      _api.lastMealSignalPayload;
+  Future<bool> hasActiveSession() => _api.hasActiveSession();
 
   Future<bool> login(String email, String password) =>
       _api.login(email, password);
@@ -69,13 +75,45 @@ class AppRepository {
   ) => _api.uploadPantryItemImage(pantryItemId, imageFile);
   Future<Map<String, dynamic>?> lookupPantryBarcode(String barcode) =>
       _api.lookupPantryBarcode(barcode);
+  Future<List<Map<String, dynamic>>> searchProductCatalog({
+    required String query,
+    String? country,
+    int page = 1,
+    int size = 12,
+  }) => _api.searchProductCatalog(
+    query: query,
+    country: country,
+    page: page,
+    size: size,
+  );
+  Future<Map<String, dynamic>?> getProductCatalogItem(String code) =>
+      _api.getProductCatalogItem(code);
+  Future<Map<String, dynamic>?> searchProductCatalogPage({
+    required String query,
+    String? country,
+    int page = 1,
+    int size = 20,
+  }) => _api.searchProductCatalogPage(
+    query: query,
+    country: country,
+    page: page,
+    size: size,
+  );
+  Future<Map<String, dynamic>?> lookupProductCatalogBarcode(String barcode) =>
+      _api.lookupProductCatalogBarcode(barcode);
 
   Future<List<Map<String, dynamic>>> getMeals({
     DateTime? dateFrom,
     DateTime? dateTo,
   }) => _api.getMeals(dateFrom: dateFrom, dateTo: dateTo);
+  Future<Map<String, dynamic>?> getMealById(String mealEntryId) =>
+      _api.getMealById(mealEntryId);
   Future<Map<String, dynamic>?> createMeal(Map<String, dynamic> data) =>
       _api.createMeal(data);
+  Future<Map<String, dynamic>?> updateMeal(
+    String mealEntryId,
+    Map<String, dynamic> data,
+  ) => _api.updateMeal(mealEntryId, data);
   Future<bool> deleteMeal(String mealEntryId) => _api.deleteMeal(mealEntryId);
 
   Future<List<Map<String, dynamic>>> getShoppingItems() =>

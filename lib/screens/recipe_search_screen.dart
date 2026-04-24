@@ -64,9 +64,14 @@ const List<String> _recipeSearchQuickKeywordsRu = [
 ];
 
 class RecipeSearchScreen extends StatefulWidget {
-  const RecipeSearchScreen({super.key, this.onOpenOrganizerTap});
+  const RecipeSearchScreen({
+    super.key,
+    this.onOpenOrganizerTap,
+    this.isActive = false,
+  });
 
   final VoidCallback? onOpenOrganizerTap;
+  final bool isActive;
 
   @override
   State<RecipeSearchScreen> createState() => _RecipeSearchScreenState();
@@ -132,6 +137,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
   Future<void>? _pantryNamesLoadFuture;
   Set<String> _pantryNames = const {};
   List<SuggestionOption> _searchSuggestions = const [];
+  DateTime? _lastAutoRefreshAt;
 
   String? diet;
   String? selectedKeyword;
@@ -172,7 +178,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     String message, {
     AppFeedbackKind? kind,
     bool preferPopup = false,
-    bool addToInbox = true,
+    bool addToInbox = false,
   }) {
     if (!mounted) return;
     showAppFeedback(
@@ -238,6 +244,21 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
         _searchFromFirstPage();
       });
     }
+  }
+
+  @override
+  void didUpdateWidget(covariant RecipeSearchScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.isActive || oldWidget.isActive) return;
+
+    final now = DateTime.now();
+    final canRefresh =
+        _lastAutoRefreshAt == null ||
+        now.difference(_lastAutoRefreshAt!) > const Duration(seconds: 2);
+    if (!canRefresh || loading) return;
+
+    _lastAutoRefreshAt = now;
+    _refreshOnActivate();
   }
 
   @override
@@ -334,6 +355,20 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
       }
     }
     return true;
+  }
+
+  Future<void> _refreshOnActivate() async {
+    await _loadRecipeHighlights();
+    await _loadSearchHistory();
+    await likes.refresh();
+    await _ensurePantryNamesLoaded();
+    if (searched ||
+        results.isNotEmpty ||
+        titleCtrl.text.trim().isNotEmpty ||
+        (selectedKeyword?.trim().isNotEmpty ?? false) ||
+        (diet?.trim().isNotEmpty ?? false)) {
+      await _searchFromFirstPage();
+    }
   }
 
   Future<void> _applySearchSuggestion(SuggestionOption option) async {
@@ -786,6 +821,7 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
         .then((_) => likes.refresh());
   }
 
+  ///ПОИСК
   Future<void> _searchFromFirstPage() => search(page: 1);
 
   Future<void> search({int page = 1}) async {
@@ -909,33 +945,50 @@ class _RecipeSearchScreenState extends State<RecipeSearchScreen> {
     final targetPage = await showDialog<int>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(_isRu ? 'Перейти на страницу' : 'Go to page'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              hintText: _isRu ? 'Введите номер' : 'Enter page number',
-            ),
-            onSubmitted: (_) {
-              final page = int.tryParse(controller.text.trim());
-              Navigator.of(dialogContext).pop(page);
-            },
+        return AtelierDialogFrame(
+          title: _isRu ? 'Перейти на страницу' : 'Go to page',
+          subtitle: _isRu
+              ? 'Введи номер страницы, чтобы быстро перейти к нужному результату.'
+              : 'Enter a page number to jump straight to the results you need.',
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  hintText: _isRu ? 'Введите номер' : 'Enter page number',
+                ),
+                onSubmitted: (_) {
+                  final page = int.tryParse(controller.text.trim());
+                  Navigator.of(dialogContext).pop(page);
+                },
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      child: Text(_isRu ? 'Отмена' : 'Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () {
+                        final page = int.tryParse(controller.text.trim());
+                        Navigator.of(dialogContext).pop(page);
+                      },
+                      child: Text(_isRu ? 'Перейти' : 'Go'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: Text(_isRu ? 'Отмена' : 'Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final page = int.tryParse(controller.text.trim());
-                Navigator.of(dialogContext).pop(page);
-              },
-              child: Text(_isRu ? 'Перейти' : 'Go'),
-            ),
-          ],
         );
       },
     );

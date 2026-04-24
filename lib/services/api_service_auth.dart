@@ -9,41 +9,66 @@ extension ApiServiceAuthMethods on ApiService {
       Uri.parse('${ApiService.baseUrl}/api/auth/signin'),
     ];
 
-    for (final url in endpoints) {
-      try {
-        final postResp = await http.post(
-          url,
-          headers: {'Content-Type': 'application/json'},
-          body: body,
-        );
-        print('Login POST $url: ${postResp.statusCode}');
-        if (await _saveTokensFromAuthResponse(postResp)) return true;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      var sawTransientFailure = false;
 
-        if (postResp.statusCode == 405) {
-          final putResp = await http.put(
-            url,
-            headers: {'Content-Type': 'application/json'},
-            body: body,
-          );
-          print('Login PUT $url: ${putResp.statusCode}');
-          if (await _saveTokensFromAuthResponse(putResp)) return true;
-          print('Login failed [$url]: ${putResp.body}');
-          if (putResp.statusCode != 404 &&
-              putResp.statusCode != 405 &&
-              putResp.statusCode != 501) {
+      for (final url in endpoints) {
+        try {
+          final postResp = await http
+              .post(
+                url,
+                headers: {'Content-Type': 'application/json'},
+                body: body,
+              )
+              .timeout(const Duration(seconds: 15));
+          print('Login POST $url: ${postResp.statusCode}');
+          if (await _saveTokensFromAuthResponse(postResp)) return true;
+
+          if (postResp.statusCode == 405) {
+            final putResp = await http
+                .put(
+                  url,
+                  headers: {'Content-Type': 'application/json'},
+                  body: body,
+                )
+                .timeout(const Duration(seconds: 15));
+            print('Login PUT $url: ${putResp.statusCode}');
+            if (await _saveTokensFromAuthResponse(putResp)) return true;
+            print('Login failed [$url]: ${putResp.body}');
+            if (putResp.statusCode >= 500) {
+              sawTransientFailure = true;
+              continue;
+            }
+            if (putResp.statusCode != 404 &&
+                putResp.statusCode != 405 &&
+                putResp.statusCode != 501) {
+              return false;
+            }
+          }
+
+          print('Login failed [$url]: ${postResp.body}');
+          if (postResp.statusCode >= 500) {
+            sawTransientFailure = true;
+            continue;
+          }
+          if (postResp.statusCode != 404 &&
+              postResp.statusCode != 405 &&
+              postResp.statusCode != 501) {
             return false;
           }
+        } on SocketException catch (e) {
+          sawTransientFailure = true;
+          print('Login socket error [$url]: $e');
+        } on TimeoutException catch (e) {
+          sawTransientFailure = true;
+          print('Login timeout [$url]: $e');
+        } catch (e) {
+          print('Login error [$url]: $e');
         }
-
-        print('Login failed [$url]: ${postResp.body}');
-        if (postResp.statusCode != 404 &&
-            postResp.statusCode != 405 &&
-            postResp.statusCode != 501) {
-          return false;
-        }
-      } catch (e) {
-        print('Login error [$url]: $e');
       }
+
+      if (!sawTransientFailure || attempt == 1) break;
+      await Future.delayed(const Duration(milliseconds: 350));
     }
 
     return false;

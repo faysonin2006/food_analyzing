@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -11,17 +13,34 @@ class BarcodeScannerScreen extends StatefulWidget {
 }
 
 class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
+  static const _scannerArmDelay = Duration(milliseconds: 1200);
+  static const _scanDetectionTimeoutMs = 900;
+
+  ///Контроллер камеры
   final MobileScannerController _controller = MobileScannerController(
-    detectionSpeed: DetectionSpeed.noDuplicates,
+    detectionSpeed: DetectionSpeed.normal,
+    detectionTimeoutMs: _scanDetectionTimeoutMs,
     returnImage: false,
   );
   bool _didPop = false;
+  bool _scannerArmed = false;
+  Timer? _scannerArmTimer;
   final TextEditingController _manualController = TextEditingController();
 
   bool get _isRu => Localizations.localeOf(context).languageCode == 'ru';
 
   @override
+  void initState() {
+    super.initState();
+    _scannerArmTimer = Timer(_scannerArmDelay, () {
+      if (!mounted) return;
+      setState(() => _scannerArmed = true);
+    });
+  }
+
+  @override
   void dispose() {
+    _scannerArmTimer?.cancel();
     _manualController.dispose();
     _controller.dispose();
     super.dispose();
@@ -45,6 +64,7 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
             child: MobileScanner(
               controller: _controller,
               onDetect: (capture) {
+                if (!_scannerArmed) return;
                 for (final code in capture.barcodes) {
                   final value = code.rawValue?.trim() ?? '';
                   if (value.isNotEmpty) {
@@ -171,13 +191,73 @@ class _BarcodeScannerScreenState extends State<BarcodeScannerScreen> {
                         ),
                         const SizedBox(height: 10),
                         Text(
-                          _isRu
-                              ? 'Держи код внутри рамки или введи его вручную ниже.'
-                              : 'Center the code inside the frame or type it manually below.',
+                          _scannerArmed
+                              ? (_isRu
+                                    ? 'Держи код внутри рамки или введи его вручную ниже.'
+                                    : 'Center the code inside the frame or type it manually below.')
+                              : (_isRu
+                                    ? 'Спокойно наведи камеру на код, сканер включится через мгновение.'
+                                    : 'Take a moment to aim the camera, scanning will start in a second.'),
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: Colors.white70,
                             fontWeight: FontWeight.w600,
                             height: 1.3,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 220),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color:
+                                (_scannerArmed
+                                        ? AppTheme.atelierMint
+                                        : Colors.white)
+                                    .withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color:
+                                  (_scannerArmed
+                                          ? AppTheme.atelierMint
+                                          : Colors.white)
+                                      .withValues(alpha: 0.32),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    _scannerArmed
+                                        ? AppTheme.atelierMint
+                                        : Colors.white70,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                _scannerArmed
+                                    ? (_isRu
+                                          ? 'Сканер активен'
+                                          : 'Scanner is active')
+                                    : (_isRu
+                                          ? 'Подготовка сканера...'
+                                          : 'Preparing scanner...'),
+                                style: theme.textTheme.labelLarge?.copyWith(
+                                  color: _scannerArmed
+                                      ? AppTheme.atelierMint
+                                      : Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: 20),

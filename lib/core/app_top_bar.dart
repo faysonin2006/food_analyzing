@@ -5,10 +5,18 @@ import 'package:flutter/material.dart';
 import 'network_monitor.dart';
 
 class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
-  const AppTopBar({super.key, required this.title, required this.actions});
+  const AppTopBar({
+    super.key,
+    required this.title,
+    required this.actions,
+    this.showBackWhenCanPop = true,
+    this.onBack,
+  });
 
   final String title;
   final List<Widget> actions;
+  final bool showBackWhenCanPop;
+  final VoidCallback? onBack;
 
   @override
   Size get preferredSize => const Size.fromHeight(84);
@@ -18,6 +26,10 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final canPop =
+        showBackWhenCanPop &&
+        ((ModalRoute.of(context)?.canPop ?? false) ||
+            Navigator.canPop(context));
     final shellColor = Color.alphaBlend(
       cs.surface.withValues(alpha: isDark ? 0.72 : 0.82),
       theme.scaffoldBackgroundColor,
@@ -55,6 +67,38 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
                 ),
                 child: Row(
                   children: [
+                    if (canPop) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(right: 10),
+                        child: IconButton(
+                          onPressed:
+                              onBack ?? () => Navigator.of(context).maybePop(),
+                          tooltip: MaterialLocalizations.of(
+                            context,
+                          ).backButtonTooltip,
+                          style: IconButton.styleFrom(
+                            fixedSize: const Size(38, 38),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            backgroundColor: Color.alphaBlend(
+                              cs.primary.withValues(
+                                alpha: isDark ? 0.22 : 0.12,
+                              ),
+                              cs.surface,
+                            ),
+                            foregroundColor: cs.primary,
+                            side: BorderSide(
+                              color: cs.primary.withValues(
+                                alpha: isDark ? 0.18 : 0.12,
+                              ),
+                            ),
+                            padding: EdgeInsets.zero,
+                          ),
+                          icon: const Icon(Icons.arrow_back_rounded, size: 19),
+                        ),
+                      ),
+                    ],
                     Expanded(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,

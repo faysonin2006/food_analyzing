@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'atelier_ui.dart';
 import 'app_scope.dart';
 import 'notification_preferences.dart';
 import 'settings_sheet.dart';
@@ -16,7 +17,7 @@ Future<void> showAppFeedback(
   AppFeedbackKind? kind,
   String? source,
   bool preferPopup = false,
-  bool addToInbox = true,
+  bool addToInbox = false,
 }) {
   return AppFeedbackCenter.instance.show(
     context,
@@ -140,7 +141,7 @@ class AppFeedbackCenter extends ChangeNotifier {
     AppFeedbackKind? kind,
     String? source,
     bool preferPopup = false,
-    bool addToInbox = true,
+    bool addToInbox = false,
   }) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
     await initialize();
@@ -276,7 +277,7 @@ class AppFeedbackCenter extends ChangeNotifier {
     required bool preferPopup,
   }) {
     final now = DateTime.now();
-    final shouldPopup = preferPopup || kind == AppFeedbackKind.error;
+    final shouldPopup = preferPopup;
     if (!shouldPopup) return false;
     if (_lastPopupKey == popupKey &&
         _lastPopupAt != null &&
@@ -352,8 +353,6 @@ Future<void> showAppInboxSheet(BuildContext context) async {
 
   if (!context.mounted) return;
 
-  var remindersExpanded = false;
-
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -370,6 +369,7 @@ Future<void> showAppInboxSheet(BuildContext context) async {
               sheetContext,
               settings.notificationPreferences,
             );
+            final groupedEntries = _groupInboxEntries(sheetContext, entries);
 
             return ConstrainedBox(
               constraints: BoxConstraints(
@@ -380,100 +380,51 @@ Future<void> showAppInboxSheet(BuildContext context) async {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            tr(sheetContext, 'notifications'),
-                            style: Theme.of(sheetContext).textTheme.titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: entries.isEmpty
-                              ? null
-                              : () => AppFeedbackCenter.instance.clear(),
-                          child: Text(tr(sheetContext, 'clear_history')),
-                        ),
-                      ],
-                    ),
-                    Text(
-                      tr(sheetContext, 'notifications_inbox_subtitle'),
-                      style: Theme.of(sheetContext).textTheme.bodyMedium
-                          ?.copyWith(
-                            color: Theme.of(
-                              sheetContext,
-                            ).colorScheme.onSurfaceVariant,
-                          ),
+                    AtelierSheetHeader(
+                      title: tr(sheetContext, 'notifications'),
+                      subtitle: tr(
+                        sheetContext,
+                        'notifications_inbox_subtitle',
+                      ),
+                      trailing: TextButton(
+                        onPressed: entries.isEmpty
+                            ? null
+                            : () => AppFeedbackCenter.instance.clear(),
+                        child: Text(tr(sheetContext, 'clear_history')),
+                      ),
+                      onClose: () => Navigator.of(sheetContext).maybePop(),
                     ),
                     if (reminders.isNotEmpty) ...[
                       const SizedBox(height: 14),
-                      InkWell(
-                        onTap: () => setSheetState(
-                          () => remindersExpanded = !remindersExpanded,
-                        ),
-                        borderRadius: BorderRadius.circular(18),
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 12,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Theme.of(sheetContext)
-                                .colorScheme
-                                .surfaceContainerHighest
-                                .withValues(alpha: 0.28),
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(
-                              color: Theme.of(sheetContext)
-                                  .colorScheme
-                                  .outlineVariant
-                                  .withValues(alpha: 0.32),
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  '${tr(sheetContext, 'reminders_section')} • ${reminders.length}',
-                                  style: Theme.of(sheetContext)
-                                      .textTheme
-                                      .titleSmall
-                                      ?.copyWith(fontWeight: FontWeight.w700),
+                      _InboxBlock(
+                        title:
+                            '${tr(sheetContext, 'reminders_section')} • ${reminders.length}',
+                        child: Column(
+                          children: [
+                            ...reminders,
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: OutlinedButton.icon(
+                                onPressed: () {
+                                  Navigator.of(sheetContext).pop();
+                                  showAppSettingsSheet(context);
+                                },
+                                icon: const Icon(Icons.tune_rounded),
+                                label: Text(
+                                  tr(sheetContext, 'manage_reminders'),
                                 ),
                               ),
-                              Icon(
-                                remindersExpanded
-                                    ? Icons.expand_less_rounded
-                                    : Icons.expand_more_rounded,
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ),
-                      if (remindersExpanded) ...[
-                        const SizedBox(height: 10),
-                        ...reminders,
-                        const SizedBox(height: 10),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: OutlinedButton.icon(
-                            onPressed: () {
-                              Navigator.of(sheetContext).pop();
-                              showAppSettingsSheet(context);
-                            },
-                            icon: const Icon(Icons.tune_rounded),
-                            label: Text(tr(sheetContext, 'manage_reminders')),
-                          ),
-                        ),
-                      ],
                     ],
                     const SizedBox(height: 16),
                     _InboxSectionTitle(
                       text: tr(sheetContext, 'history_section'),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     Expanded(
                       child: entries.isEmpty
                           ? _EmptyInboxCard(
@@ -483,12 +434,29 @@ Future<void> showAppInboxSheet(BuildContext context) async {
                               ),
                             )
                           : ListView.separated(
-                              itemCount: entries.length,
+                              itemCount: groupedEntries.length,
                               separatorBuilder: (_, _) =>
-                                  const SizedBox(height: 8),
+                                  const SizedBox(height: 12),
                               itemBuilder: (context, index) {
-                                final entry = entries[index];
-                                return _FeedbackEntryCard(entry: entry);
+                                final group = groupedEntries[index];
+                                return _InboxBlock(
+                                  title: group.label,
+                                  child: Column(
+                                    children: [
+                                      for (
+                                        var i = 0;
+                                        i < group.entries.length;
+                                        i++
+                                      ) ...[
+                                        _FeedbackEntryCard(
+                                          entry: group.entries[i],
+                                        ),
+                                        if (i != group.entries.length - 1)
+                                          const SizedBox(height: 8),
+                                      ],
+                                    ],
+                                  ),
+                                );
                               },
                             ),
                     ),
@@ -555,6 +523,38 @@ List<Widget> _buildReminderRows(
   return rows;
 }
 
+List<_InboxHistoryGroup> _groupInboxEntries(
+  BuildContext context,
+  List<AppFeedbackEntry> entries,
+) {
+  final isRu = Localizations.localeOf(context).languageCode == 'ru';
+  final now = DateTime.now();
+  final grouped = <String, List<AppFeedbackEntry>>{};
+
+  String bucketLabel(DateTime value) {
+    final day = DateTime(value.year, value.month, value.day);
+    final today = DateTime(now.year, now.month, now.day);
+    final delta = today.difference(day).inDays;
+    if (delta == 0) return isRu ? 'Сегодня' : 'Today';
+    if (delta == 1) return isRu ? 'Вчера' : 'Yesterday';
+    final dd = value.day.toString().padLeft(2, '0');
+    final mm = value.month.toString().padLeft(2, '0');
+    final yyyy = value.year.toString();
+    return isRu ? '$dd.$mm.$yyyy' : '$yyyy-$mm-$dd';
+  }
+
+  for (final entry in entries) {
+    final label = bucketLabel(entry.createdAt);
+    grouped.putIfAbsent(label, () => <AppFeedbackEntry>[]).add(entry);
+  }
+
+  return grouped.entries
+      .map(
+        (entry) => _InboxHistoryGroup(label: entry.key, entries: entry.value),
+      )
+      .toList(growable: false);
+}
+
 String _formatTime(BuildContext context, TimeOfDay value) {
   return MaterialLocalizations.of(context).formatTimeOfDay(value);
 }
@@ -590,6 +590,40 @@ class _InboxSectionTitle extends StatelessWidget {
       style: Theme.of(
         context,
       ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+    );
+  }
+}
+
+class _InboxBlock extends StatelessWidget {
+  const _InboxBlock({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.22),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
     );
   }
 }
@@ -636,15 +670,24 @@ class _ReminderRow extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.35)),
+        color: cs.surface.withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.22)),
       ),
       child: Row(
         children: [
-          Icon(icon, color: cs.primary),
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: cs.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            alignment: Alignment.center,
+            child: Icon(icon, color: cs.primary, size: 18),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -659,9 +702,10 @@ class _ReminderRow extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   subtitle,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ],
             ),
@@ -692,26 +736,47 @@ class _FeedbackEntryCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest.withValues(alpha: 0.32),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.32)),
+        color: cs.surface.withValues(alpha: 0.62),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.22)),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: color),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                alignment: Alignment.center,
+                child: Icon(icon, color: color, size: 18),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     if (entry.source != null && entry.source!.isNotEmpty)
-                      Expanded(
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: cs.surfaceContainerHighest.withValues(
+                            alpha: 0.55,
+                          ),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
                         child: Text(
                           entry.source!,
-                          style: Theme.of(context).textTheme.labelLarge
+                          style: Theme.of(context).textTheme.labelMedium
                               ?.copyWith(fontWeight: FontWeight.w800),
                         ),
                       ),
@@ -719,23 +784,32 @@ class _FeedbackEntryCard extends StatelessWidget {
                       _formatEntryDate(context, entry.createdAt),
                       style: Theme.of(context).textTheme.labelMedium?.copyWith(
                         color: cs.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ],
                 ),
-                if (entry.source != null && entry.source!.isNotEmpty)
-                  const SizedBox(height: 4),
-                Text(
-                  entry.message,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ],
-            ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            entry.message,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(height: 1.3),
           ),
         ],
       ),
     );
   }
+}
+
+class _InboxHistoryGroup {
+  const _InboxHistoryGroup({required this.label, required this.entries});
+
+  final String label;
+  final List<AppFeedbackEntry> entries;
 }
 
 String _formatEntryDate(BuildContext context, DateTime value) {

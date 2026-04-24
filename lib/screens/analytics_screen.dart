@@ -5,17 +5,20 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
+import '../core/live_refresh.dart';
 import '../repositories/app_repository.dart';
 
 class AnalyticsScreen extends StatefulWidget {
-  const AnalyticsScreen({super.key});
+  const AnalyticsScreen({super.key, this.isActive = false});
+
+  final bool isActive;
 
   @override
   State<AnalyticsScreen> createState() => _AnalyticsScreenState();
 }
 
 class _AnalyticsScreenState extends State<AnalyticsScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, LiveRefreshState<AnalyticsScreen> {
   static const String _analyticsPeriodStorageKey = 'analytics_period_days_v1';
 
   final AppRepository repository = AppRepository.instance;
@@ -24,14 +27,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   bool _isRefreshingRange = false;
   Map<String, dynamic>? _daily;
   Map<String, dynamic>? _weekly;
-  Map<String, dynamic>? _macros;
   List<Map<String, dynamic>> _meals = const [];
   int _selectedPeriodDays = 7;
   int? _selectedCaloriePointIndex;
+  int? _selectedRhythmPointIndex;
   int? _selectedMacroPointIndex;
   bool _showProteinTrend = true;
   bool _showFatTrend = true;
   bool _showCarbTrend = true;
+  DateTime? _lastAutoRefreshAt;
+  String? _loadedDayKey;
   late final AnimationController _chartAnimationController;
   late final Animation<double> _chartAnimation;
 
@@ -39,6 +44,23 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   ThemeData get _theme => Theme.of(context);
   ColorScheme get _cs => _theme.colorScheme;
   bool get _isDark => _theme.brightness == Brightness.dark;
+  bool get _routeIsCurrent {
+    final route = ModalRoute.of(context);
+    return route?.isCurrent ?? true;
+  }
+
+  @override
+  Duration get liveRefreshInterval => const Duration(minutes: 1);
+
+  @override
+  bool get enableLiveRefresh => widget.isActive && _routeIsCurrent;
+
+  @override
+  Future<void> performLiveRefresh() async {
+    if (_loadedDayKey != _todayKey()) {
+      await _load();
+    }
+  }
 
   @override
   void initState() {
@@ -60,26 +82,49 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant AnalyticsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.isActive || oldWidget.isActive) return;
+
+    if (_loadedDayKey != null && _loadedDayKey != _todayKey()) {
+      _lastAutoRefreshAt = DateTime.now();
+      _load();
+      return;
+    }
+
+    final now = DateTime.now();
+    final shouldRefresh =
+        _lastAutoRefreshAt == null ||
+        now.difference(_lastAutoRefreshAt!) > const Duration(seconds: 2);
+    if (!shouldRefresh) return;
+    _lastAutoRefreshAt = now;
+    _load();
+  }
+
   Future<void> _load() async {
-    final initialLoad = _daily == null && _weekly == null && _macros == null;
+    final initialLoad = _daily == null && _weekly == null;
     setState(() {
       _loading = initialLoad;
       _isRefreshingRange = !initialLoad;
     });
+    final requestedDay = DateTime.now();
+    final requestedDayKey = _dateKey(_dateOnly(requestedDay));
     final rangeStart = _rangeStart();
     final rangeEnd = _rangeEnd();
     final results = await Future.wait<Object?>([
-      repository.getDailyAnalytics(),
+      repository.getDailyAnalytics(date: requestedDay),
       repository.getWeeklyAnalytics(dateFrom: rangeStart, dateTo: rangeEnd),
-      repository.getMacroSummary(dateFrom: rangeStart, dateTo: rangeEnd),
       repository.getMeals(dateFrom: rangeStart, dateTo: rangeEnd),
     ]);
     if (!mounted) return;
     setState(() {
       _daily = results[0] as Map<String, dynamic>?;
       _weekly = results[1] as Map<String, dynamic>?;
-      _macros = results[2] as Map<String, dynamic>?;
-      _meals = (results[3] as List).cast<Map<String, dynamic>>();
+      _meals = (results[2] as List).cast<Map<String, dynamic>>();
+      _loadedDayKey = _daily?['date']?.toString().trim().isNotEmpty == true
+          ? _daily!['date'].toString().trim()
+          : requestedDayKey;
       _loading = false;
       _isRefreshingRange = false;
     });
@@ -102,6 +147,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     setState(() {
       _selectedPeriodDays = days;
       _selectedCaloriePointIndex = null;
+      _selectedRhythmPointIndex = null;
       _selectedMacroPointIndex = null;
     });
     final prefs = await SharedPreferences.getInstance();
@@ -131,6 +177,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     return normalized.toStringAsFixed(1);
   }
 
+  double _dailyMacroValue(List<String> keys) {
+    for (final key in keys) {
+      final value = _daily?[key];
+      if (value != null) return _toDouble(value);
+    }
+    return 0;
+  }
+
   DateTime _dateOnly(DateTime value) =>
       DateTime(value.year, value.month, value.day);
 
@@ -146,17 +200,20 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     return '$y-$m-$d';
   }
 
+  String _todayKey() => _dateKey(_dateOnly(DateTime.now()));
+
   String _periodChipLabel(int days) => _isRu ? '$days дн.' : '${days}d';
 
   double _chartXForIndex(int index, int count, double width) {
     if (count <= 1) return width / 2;
-    return width * (index / (count - 1));
+    final segmentWidth = width / count;
+    return segmentWidth * (index + 0.5);
   }
 
   int _chartIndexForDx(double dx, int count, double width) {
     if (count <= 1 || width <= 0) return 0;
-    final ratio = (dx / width).clamp(0.0, 1.0);
-    return (ratio * (count - 1)).round().clamp(0, count - 1);
+    final segmentWidth = width / count;
+    return (dx / segmentWidth).floor().clamp(0, count - 1);
   }
 
   String _chartTooltipDate(DateTime date) {
@@ -211,6 +268,72 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     return '$day/$month';
   }
 
+  ({List<double> ticks, double axisMax}) _positiveAxisScale({
+    required double maxValue,
+    int count = 4,
+    double paddingFactor = 0.1,
+  }) {
+    final safeCount = math.max(count, 2);
+    final paddedMax = math.max(maxValue * (1 + paddingFactor), 1.0);
+    final rawStep = paddedMax / (safeCount - 1);
+    final magnitude = math
+        .pow(10, (math.log(rawStep) / math.ln10).floor())
+        .toDouble();
+    final normalized = rawStep / magnitude;
+    final niceNormalized = switch (normalized) {
+      <= 1 => 1.0,
+      <= 2 => 2.0,
+      <= 2.5 => 2.5,
+      <= 5 => 5.0,
+      _ => 10.0,
+    };
+    final step = niceNormalized * magnitude;
+    final axisMax = step * (safeCount - 1);
+    final ticks = List<double>.generate(
+      safeCount,
+      (index) => axisMax - step * index,
+    );
+    return (ticks: ticks, axisMax: axisMax);
+  }
+
+  Widget _buildChartYAxis({
+    required List<String> labels,
+    required double height,
+    double width = 46,
+    double top = 12,
+    double bottom = 14,
+  }) {
+    return Container(
+      width: width,
+      height: height,
+      padding: EdgeInsets.only(top: top, bottom: bottom, right: 10),
+      decoration: BoxDecoration(
+        border: Border(
+          right: BorderSide(color: _cs.outlineVariant.withValues(alpha: 0.18)),
+        ),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: labels
+            .map(
+              (label) => Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.fade,
+                softWrap: false,
+                style: TextStyle(
+                  color: _cs.onSurfaceVariant.withValues(alpha: 0.84),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            )
+            .toList(),
+      ),
+    );
+  }
+
   DateTime? _parseItemDate(dynamic raw) {
     final parsed = DateTime.tryParse(raw?.toString() ?? '');
     return parsed == null ? null : _dateOnly(parsed.toLocal());
@@ -258,9 +381,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       final key = _dateKey(date);
       final current = totals[key] ?? (proteins: 0.0, fats: 0.0, carbs: 0.0);
       totals[key] = (
-        proteins: current.proteins + _toDouble(meal['proteins']),
-        fats: current.fats + _toDouble(meal['fats']),
-        carbs: current.carbs + _toDouble(meal['carbs']),
+        proteins:
+            current.proteins + _toDouble(meal['proteins'] ?? meal['protein']),
+        fats: current.fats + _toDouble(meal['fats'] ?? meal['fat']),
+        carbs:
+            current.carbs +
+            _toDouble(meal['carbohydrates'] ?? meal['carbs'] ?? meal['carb']),
       );
     }
 
@@ -274,6 +400,30 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
         proteins: values.proteins,
         fats: values.fats,
         carbs: values.carbs,
+      );
+    });
+  }
+
+  List<_RhythmPoint> _buildRhythmPoints({
+    required List<Map<String, dynamic>> meals,
+    required DateTime start,
+    required int days,
+  }) {
+    final totals = <String, int>{};
+    for (final meal in meals) {
+      final date = _parseItemDate(
+        meal['eatenAt'] ?? meal['createdAt'] ?? meal['created_at'],
+      );
+      if (date == null) continue;
+      totals.update(_dateKey(date), (value) => value + 1, ifAbsent: () => 1);
+    }
+
+    return List.generate(days, (index) {
+      final day = start.add(Duration(days: index));
+      return _RhythmPoint(
+        date: day,
+        label: _axisLabelForDate(day, index, days),
+        mealsCount: totals[_dateKey(day)] ?? 0,
       );
     });
   }
@@ -397,7 +547,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   Widget _sectionHeader({
     required String eyebrow,
     required String title,
-    required String subtitle,
+    String? subtitle,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -418,15 +568,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             fontSize: 28,
             fontWeight: FontWeight.w800,
             height: 1.02,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          subtitle,
-          style: TextStyle(
-            color: _cs.onSurfaceVariant.withValues(alpha: 0.92),
-            fontWeight: FontWeight.w600,
-            height: 1.3,
           ),
         ),
       ],
@@ -546,15 +687,44 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     );
   }
 
-  double _consistencyScore(List<_CaloriePoint> points, double averageCalories) {
-    if (points.isEmpty || averageCalories <= 0) return 0;
-    final deviation =
-        points
-            .map((point) => (point.value - averageCalories).abs())
-            .reduce((a, b) => a + b) /
-        points.length;
-    final ratio = deviation / averageCalories;
-    return (100 - ratio * 100).clamp(0, 100).toDouble();
+  Widget _macroAveragePill({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color accent,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: _isDark ? 0.16 : 0.1),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: accent.withValues(alpha: 0.14)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: accent),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: TextStyle(
+              color: _cs.onSurfaceVariant,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            value,
+            style: TextStyle(
+              color: accent,
+              fontSize: 14,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   String _macroMoodLabel({
@@ -565,7 +735,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     final shares = [proteinShare, fatShare, carbShare]..sort();
     if ((shares.last - shares.first) < 0.12) {
       return _isRu
-          ? 'Сбалансированное распределение макросов'
+          ? 'Сбалансированное распределение КБЖУ'
           : 'Balanced macro split';
     }
     if (proteinShare >= fatShare && proteinShare >= carbShare) {
@@ -633,27 +803,63 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     );
   }
 
-  Widget _buildWeeklyRhythmCard(
-    List<_CaloriePoint> points,
-    double averageCalories,
-  ) {
+  Widget _buildWeeklyRhythmCard(List<_RhythmPoint> points) {
     if (points.isEmpty) return const SizedBox.shrink();
 
-    final maxValue = math.max(
-      points.map((point) => point.value).reduce(math.max),
-      1.0,
-    );
-    final consistency = _consistencyScore(points, averageCalories);
-    final rhythmAccent = consistency >= 76
+    final activePoints = points
+        .where((point) => point.mealsCount > 0)
+        .toList(growable: false);
+    if (activePoints.isEmpty) {
+      return _glassCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _isRu ? 'Ритм питания' : 'Eating rhythm',
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _isRu
+                  ? 'За выбранный период пока нет записей о приёмах пищи.'
+                  : 'No meal entries for the selected range yet.',
+              style: TextStyle(
+                color: _cs.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final activeRatio = activePoints.length / points.length;
+    final rhythmAccent = activeRatio >= 0.8
         ? _cs.primary
-        : consistency >= 58
+        : activeRatio >= 0.5
         ? _cs.secondary
         : _cs.tertiary;
-    final rhythmLabel = consistency >= 76
-        ? (_isRu ? 'Ровный ритм' : 'Steady rhythm')
-        : consistency >= 58
-        ? (_isRu ? 'Небольшие колебания' : 'Light swings')
-        : (_isRu ? 'Период был неровным' : 'Volatile range');
+    final peakPoint = activePoints.reduce(
+      (a, b) => a.mealsCount >= b.mealsCount ? a : b,
+    );
+    final maxMeals = math.max(
+      1.0,
+      points.map((point) => point.mealsCount.toDouble()).reduce(math.max),
+    );
+    final axisScale = _positiveAxisScale(maxValue: maxMeals, count: 4);
+    final axisLabels = axisScale.ticks
+        .map((value) => _formatWhole(value))
+        .toList(growable: false);
+    const yAxisWidth = 42.0;
+    const chartGap = 10.0;
+    const chartHeight = 124.0;
+    final summaryText = _isRu
+        ? 'Больше всего приемов пищи было ${_chartTooltipDate(peakPoint.date)}.'
+        : 'Most meals were logged on ${_chartTooltipDate(peakPoint.date)}.';
+    final selectedIndex = _selectedRhythmPointIndex?.clamp(
+      0,
+      points.length - 1,
+    );
 
     return _glassCard(
       child: Column(
@@ -667,18 +873,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _isRu ? 'Ритм периода' : 'Period rhythm',
+                      _isRu ? 'Ритм питания' : 'Eating rhythm',
                       style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      rhythmLabel,
-                      style: TextStyle(
-                        color: _cs.onSurfaceVariant,
-                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ],
@@ -686,84 +884,152 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               ),
               _heroPill(
                 icon: Icons.multiline_chart_rounded,
-                label:
-                    '${_formatWhole(consistency)}% ${_isRu ? 'стабильности' : 'stability'}',
+                label: _isRu
+                    ? '${activePoints.length} активных дней'
+                    : '${activePoints.length} active days',
                 color: rhythmAccent,
               ),
             ],
           ),
-          const SizedBox(height: 18),
-          SizedBox(
-            height: 148,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(22),
+              color: Color.alphaBlend(
+                rhythmAccent.withValues(alpha: _isDark ? 0.08 : 0.05),
+                _cs.surface,
+              ),
+              border: Border.all(
+                color: _cs.outlineVariant.withValues(alpha: 0.2),
+              ),
+            ),
+            child: Column(
               children: [
-                for (final point in points)
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          Text(
-                            _formatWhole(point.value),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: _cs.onSurface,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Expanded(
-                            child: Align(
-                              alignment: Alignment.bottomCenter,
-                              child: FractionallySizedBox(
-                                heightFactor:
-                                    0.18 + (point.value / maxValue) * 0.82,
-                                child: Container(
-                                  width: double.infinity,
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      begin: Alignment.topCenter,
-                                      end: Alignment.bottomCenter,
-                                      colors: [
-                                        _cs.primary.withValues(alpha: 0.92),
-                                        _cs.secondary.withValues(alpha: 0.72),
-                                      ],
-                                    ),
-                                    borderRadius: BorderRadius.circular(999),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: _cs.primary.withValues(
-                                          alpha: 0.18,
-                                        ),
-                                        blurRadius: 16,
-                                        offset: const Offset(0, 8),
+                SizedBox(
+                  height: chartHeight,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildChartYAxis(
+                        labels: axisLabels,
+                        height: chartHeight,
+                        width: yAxisWidth,
+                        top: 10,
+                        bottom: 12,
+                      ),
+                      const SizedBox(width: chartGap),
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final width = constraints.maxWidth;
+                            final tooltipWidth = math.min(168.0, width);
+                            final tooltipLeft = selectedIndex == null
+                                ? 0.0
+                                : (_chartXForIndex(
+                                            selectedIndex,
+                                            points.length,
+                                            width,
+                                          ) -
+                                          tooltipWidth / 2)
+                                      .clamp(
+                                        0.0,
+                                        math.max(0.0, width - tooltipWidth),
+                                      )
+                                      .toDouble();
+
+                            void selectAtOffset(Offset localPosition) {
+                              setState(() {
+                                _selectedRhythmPointIndex = _chartIndexForDx(
+                                  localPosition.dx,
+                                  points.length,
+                                  width,
+                                );
+                              });
+                            }
+
+                            return GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTapDown: (details) =>
+                                  selectAtOffset(details.localPosition),
+                              onHorizontalDragStart: (details) =>
+                                  selectAtOffset(details.localPosition),
+                              onHorizontalDragUpdate: (details) =>
+                                  selectAtOffset(details.localPosition),
+                              child: Stack(
+                                children: [
+                                  CustomPaint(
+                                    painter: _RhythmBarChartPainter(
+                                      points: points,
+                                      axisMax: axisScale.axisMax,
+                                      selectedIndex: selectedIndex,
+                                      barColor: rhythmAccent,
+                                      guideColor: _cs.outlineVariant.withValues(
+                                        alpha: 0.18,
                                       ),
-                                    ],
+                                      selectionColor: _cs.secondary,
+                                    ),
+                                    child: const SizedBox.expand(),
                                   ),
-                                ),
+                                  if (selectedIndex != null)
+                                    Positioned(
+                                      left: tooltipLeft,
+                                      top: 0,
+                                      width: tooltipWidth,
+                                      child: _chartTooltip(
+                                        title: _chartTooltipDate(
+                                          points[selectedIndex].date,
+                                        ),
+                                        rows: [
+                                          (
+                                            rhythmAccent,
+                                            _isRu
+                                                ? '${points[selectedIndex].mealsCount} приемов пищи'
+                                                : '${points[selectedIndex].mealsCount} meals',
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                ],
                               ),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Padding(
+                  padding: const EdgeInsets.only(left: yAxisWidth + chartGap),
+                  child: Row(
+                    children: [
+                      for (final point in points)
+                        Expanded(
+                          child: Text(
                             point.label,
+                            textAlign: TextAlign.center,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: _cs.onSurfaceVariant,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 11,
                             ),
                           ),
-                        ],
-                      ),
-                    ),
+                        ),
+                    ],
                   ),
+                ),
               ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            summaryText,
+            style: TextStyle(
+              color: _cs.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
@@ -894,7 +1160,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   Widget _storyCard({
     required String title,
     required String value,
-    required String note,
+    String? note,
     required Color accent,
   }) {
     return Container(
@@ -929,17 +1195,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                 fontWeight: FontWeight.w900,
                 height: 0.95,
               ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            note,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: _cs.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
-              height: 1.24,
             ),
           ),
         ],
@@ -1204,45 +1459,42 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       0,
       points.length - 1,
     );
+    final values = points.map((point) => point.value).toList(growable: false);
+    final maxValue = math.max(values.reduce(math.max), 1.0);
+    final axisScale = _positiveAxisScale(maxValue: maxValue);
+    final axisLabels = axisScale.ticks
+        .map((value) => _formatWhole(value))
+        .toList(growable: false);
+    const yAxisWidth = 52.0;
+    const chartGap = 12.0;
+    const chartHeight = 196.0;
 
     return _glassCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _isRu ? 'Калорийность по дням' : 'Calories by day',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      _isRu
-                          ? '${_formatWhole(weeklyCalories)} ккал за период'
-                          : '${_formatWhole(weeklyCalories)} kcal in range',
-                      style: TextStyle(
-                        color: _cs.onSurfaceVariant,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
+              Text(
+                _isRu ? 'Калорийность по дням' : 'Calories by day',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
                 ),
               ),
-              _heroPill(
-                icon: deltaFromStart >= 0
-                    ? Icons.trending_up_rounded
-                    : Icons.trending_down_rounded,
-                label: _isRu
-                    ? '${deltaFromStart >= 0 ? '+' : '-'}${_formatWhole(deltaFromStart.abs())} ккал к старту'
-                    : '${deltaFromStart >= 0 ? '+' : '-'}${_formatWhole(deltaFromStart.abs())} kcal vs start',
-                color: trendAccent,
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: _heroPill(
+                  icon: deltaFromStart >= 0
+                      ? Icons.trending_up_rounded
+                      : Icons.trending_down_rounded,
+                  label: _isRu
+                      ? '${deltaFromStart >= 0 ? '+' : '-'}${_formatWhole(deltaFromStart.abs())} ккал к старту'
+                      : '${deltaFromStart >= 0 ? '+' : '-'}${_formatWhole(deltaFromStart.abs())} kcal vs start',
+                  color: trendAccent,
+                ),
               ),
             ],
           ),
@@ -1267,108 +1519,128 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             child: Column(
               children: [
                 SizedBox(
-                  height: 196,
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final width = constraints.maxWidth;
-                      final tooltipWidth = math.min(160.0, width);
-                      final tooltipLeft = selectedIndex == null
-                          ? 0.0
-                          : (_chartXForIndex(
-                                      selectedIndex,
-                                      points.length,
-                                      width,
-                                    ) -
-                                    tooltipWidth / 2)
-                                .clamp(0.0, math.max(0.0, width - tooltipWidth))
-                                .toDouble();
+                  height: chartHeight,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildChartYAxis(
+                        labels: axisLabels,
+                        height: chartHeight,
+                        width: yAxisWidth,
+                      ),
+                      const SizedBox(width: chartGap),
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final width = constraints.maxWidth;
+                            final tooltipWidth = math.min(160.0, width);
+                            final tooltipLeft = selectedIndex == null
+                                ? 0.0
+                                : (_chartXForIndex(
+                                            selectedIndex,
+                                            points.length,
+                                            width,
+                                          ) -
+                                          tooltipWidth / 2)
+                                      .clamp(
+                                        0.0,
+                                        math.max(0.0, width - tooltipWidth),
+                                      )
+                                      .toDouble();
 
-                      void selectAtOffset(Offset localPosition) {
-                        setState(() {
-                          _selectedCaloriePointIndex = _chartIndexForDx(
-                            localPosition.dx,
-                            points.length,
-                            width,
-                          );
-                        });
-                      }
+                            void selectAtOffset(Offset localPosition) {
+                              setState(() {
+                                _selectedCaloriePointIndex = _chartIndexForDx(
+                                  localPosition.dx,
+                                  points.length,
+                                  width,
+                                );
+                              });
+                            }
 
-                      return GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTapDown: (details) =>
-                            selectAtOffset(details.localPosition),
-                        onHorizontalDragStart: (details) =>
-                            selectAtOffset(details.localPosition),
-                        onHorizontalDragUpdate: (details) =>
-                            selectAtOffset(details.localPosition),
-                        child: Stack(
-                          children: [
-                            AnimatedBuilder(
-                              animation: _chartAnimation,
-                              builder: (context, _) => CustomPaint(
-                                painter: _WeeklyLineChartPainter(
-                                  values: points.map((e) => e.value).toList(),
-                                  averageValue: averageCalories,
-                                  progress: _chartAnimation.value,
-                                  selectedIndex: selectedIndex,
-                                  lineColor: _cs.primary,
-                                  fillColor: _cs.primary.withValues(
-                                    alpha: 0.16,
-                                  ),
-                                  dotColor: _cs.secondary,
-                                  guideColor: _cs.outlineVariant.withValues(
-                                    alpha: 0.22,
-                                  ),
-                                  averageGuideColor: _cs.tertiary.withValues(
-                                    alpha: 0.5,
-                                  ),
-                                  barColor: _cs.primary.withValues(alpha: 0.12),
-                                  selectionColor: _cs.secondary,
-                                ),
-                                child: const SizedBox.expand(),
-                              ),
-                            ),
-                            if (selectedIndex != null)
-                              Positioned(
-                                left: tooltipLeft,
-                                top: 0,
-                                width: tooltipWidth,
-                                child: _chartTooltip(
-                                  title: _chartTooltipDate(
-                                    points[selectedIndex].date,
-                                  ),
-                                  rows: [
-                                    (
-                                      _cs.primary,
-                                      '${_formatWhole(points[selectedIndex].value)} ${_isRu ? 'ккал' : 'kcal'}',
+                            return GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTapDown: (details) =>
+                                  selectAtOffset(details.localPosition),
+                              onHorizontalDragStart: (details) =>
+                                  selectAtOffset(details.localPosition),
+                              onHorizontalDragUpdate: (details) =>
+                                  selectAtOffset(details.localPosition),
+                              child: Stack(
+                                children: [
+                                  AnimatedBuilder(
+                                    animation: _chartAnimation,
+                                    builder: (context, _) => CustomPaint(
+                                      painter: _WeeklyLineChartPainter(
+                                        values: values,
+                                        averageValue: averageCalories,
+                                        axisMax: axisScale.axisMax,
+                                        progress: _chartAnimation.value,
+                                        selectedIndex: selectedIndex,
+                                        lineColor: _cs.primary,
+                                        fillColor: _cs.primary.withValues(
+                                          alpha: 0.16,
+                                        ),
+                                        dotColor: _cs.secondary,
+                                        guideColor: _cs.outlineVariant
+                                            .withValues(alpha: 0.22),
+                                        averageGuideColor: _cs.tertiary
+                                            .withValues(alpha: 0.5),
+                                        barColor: _cs.primary.withValues(
+                                          alpha: 0.12,
+                                        ),
+                                        selectionColor: _cs.secondary,
+                                      ),
+                                      child: const SizedBox.expand(),
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                  if (selectedIndex != null)
+                                    Positioned(
+                                      left: tooltipLeft,
+                                      top: 0,
+                                      width: tooltipWidth,
+                                      child: _chartTooltip(
+                                        title: _chartTooltipDate(
+                                          points[selectedIndex].date,
+                                        ),
+                                        rows: [
+                                          (
+                                            _cs.primary,
+                                            '${_formatWhole(points[selectedIndex].value)} ${_isRu ? 'ккал' : 'kcal'}',
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                ],
                               ),
-                          ],
+                            );
+                          },
                         ),
-                      );
-                    },
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    for (final point in points)
-                      Expanded(
-                        child: Text(
-                          point.label,
-                          textAlign: TextAlign.center,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: _cs.onSurfaceVariant,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12,
+                Padding(
+                  padding: const EdgeInsets.only(left: yAxisWidth + chartGap),
+                  child: Row(
+                    children: [
+                      for (final point in points)
+                        Expanded(
+                          child: Text(
+                            point.label,
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: _cs.onSurfaceVariant,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
                           ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1419,6 +1691,43 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
     required double carbs,
   }) {
     final total = proteins + fats + carbs;
+    if (total <= 0.01) {
+      return _glassCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _isRu ? 'Баланс БЖУ' : 'Macro balance',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                _heroPill(
+                  icon: Icons.today_rounded,
+                  label: _isRu ? 'Сегодня' : 'Today',
+                  color: _cs.primary,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _isRu
+                  ? 'За сегодня ещё нет записей с белками, жирами и углеводами.'
+                  : 'No protein, fat, or carb entries logged for today yet.',
+              style: TextStyle(
+                color: _cs.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     final proteinShare = total <= 0 ? 0.0 : proteins / total;
     final fatShare = total <= 0 ? 0.0 : fats / total;
     final carbShare = total <= 0 ? 0.0 : carbs / total;
@@ -1432,19 +1741,23 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            _isRu ? 'Баланс макросов' : 'Macro balance',
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            _isRu
-                ? 'Наглядное распределение белков, жиров и углеводов.'
-                : 'Visual split of proteins, fats, and carbohydrates.',
-            style: TextStyle(
-              color: _cs.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _isRu ? 'Баланс БЖУ' : 'Macro balance',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              _heroPill(
+                icon: Icons.today_rounded,
+                label: _isRu ? 'Сегодня' : 'Today',
+                color: _cs.primary,
+              ),
+            ],
           ),
           const SizedBox(height: 18),
           LayoutBuilder(
@@ -1562,17 +1875,60 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       );
     }
 
+    final activeDays = points.where((point) => point.total > 0.01).length;
+    if (activeDays == 0) {
+      return _glassCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              _isRu ? 'Тренд БЖУ' : 'Macro trend',
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _isRu
+                  ? 'За выбранный период пока нет записей с БЖУ.'
+                  : 'No macro entries for the selected range yet.',
+              style: TextStyle(
+                color: _cs.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final activePoints = points
+        .where((point) => point.total > 0.01)
+        .toList(growable: false);
     final proteinAvg =
-        points.map((point) => point.proteins).reduce((a, b) => a + b) /
-        points.length;
+        activePoints.map((point) => point.proteins).reduce((a, b) => a + b) /
+        activePoints.length;
     final fatAvg =
-        points.map((point) => point.fats).reduce((a, b) => a + b) /
-        points.length;
+        activePoints.map((point) => point.fats).reduce((a, b) => a + b) /
+        activePoints.length;
     final carbAvg =
-        points.map((point) => point.carbs).reduce((a, b) => a + b) /
-        points.length;
-    final activeDays = points.where((point) => point.total > 0).length;
+        activePoints.map((point) => point.carbs).reduce((a, b) => a + b) /
+        activePoints.length;
     final selectedIndex = _selectedMacroPointIndex?.clamp(0, points.length - 1);
+    final visiblePeakValues = <double>[
+      if (_showProteinTrend) ...points.map((point) => point.proteins),
+      if (_showFatTrend) ...points.map((point) => point.fats),
+      if (_showCarbTrend) ...points.map((point) => point.carbs),
+    ];
+    final maxTrendValue = math.max(
+      1.0,
+      visiblePeakValues.isEmpty ? 0.0 : visiblePeakValues.reduce(math.max),
+    );
+    final axisScale = _positiveAxisScale(maxValue: maxTrendValue);
+    final axisLabels = axisScale.ticks
+        .map((value) => _formatWhole(value))
+        .toList(growable: false);
+    const yAxisWidth = 52.0;
+    const chartGap = 12.0;
+    const chartHeight = 200.0;
     final toggleItems = [
       (
         key: 'protein',
@@ -1588,7 +1944,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       ),
       (
         key: 'carb',
-        label: _isRu ? 'Углеводы' : 'Carbs',
+        label: _isRu ? 'Углев.' : 'Carbs',
         selected: _showCarbTrend,
         color: _cs.tertiary,
       ),
@@ -1606,20 +1962,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _isRu ? 'Макросы по дням' : 'Daily macro flow',
+                      _isRu ? 'Тренд БЖУ' : 'Macro trend',
                       style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      _isRu
-                          ? 'Белки, жиры и углеводы по каждому дню выбранного периода.'
-                          : 'Proteins, fats, and carbs for each day in the selected range.',
-                      style: TextStyle(
-                        color: _cs.onSurfaceVariant,
-                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
@@ -1628,8 +1974,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               _heroPill(
                 icon: Icons.insights_rounded,
                 label: _isRu
-                    ? '$activeDays активных дней'
-                    : '$activeDays active days',
+                    ? '$activeDays из ${points.length} дней с БЖУ'
+                    : '$activeDays of ${points.length} days with macros',
                 color: _cs.secondary,
               ),
             ],
@@ -1644,6 +1990,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   label: Text(item.label),
                   selected: item.selected,
                   showCheckmark: false,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: const VisualDensity(
+                    horizontal: -2,
+                    vertical: -2,
+                  ),
                   selectedColor: item.color.withValues(alpha: 0.16),
                   backgroundColor: _cs.surfaceContainerHighest.withValues(
                     alpha: _isDark ? 0.28 : 0.7,
@@ -1655,6 +2006,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
                   ),
                   labelStyle: TextStyle(
                     color: item.selected ? item.color : _cs.onSurfaceVariant,
+                    fontSize: 12,
                     fontWeight: FontWeight.w800,
                   ),
                   onSelected: (_) => _toggleMacroVisibility(item.key),
@@ -1682,115 +2034,134 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             child: Column(
               children: [
                 SizedBox(
-                  height: 200,
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final width = constraints.maxWidth;
-                      final tooltipWidth = math.min(170.0, width);
-                      final tooltipLeft = selectedIndex == null
-                          ? 0.0
-                          : (_chartXForIndex(
-                                      selectedIndex,
-                                      points.length,
-                                      width,
-                                    ) -
-                                    tooltipWidth / 2)
-                                .clamp(0.0, math.max(0.0, width - tooltipWidth))
-                                .toDouble();
+                  height: chartHeight,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildChartYAxis(
+                        labels: axisLabels,
+                        height: chartHeight,
+                        width: yAxisWidth,
+                      ),
+                      const SizedBox(width: chartGap),
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final width = constraints.maxWidth;
+                            final tooltipWidth = math.min(170.0, width);
+                            final tooltipLeft = selectedIndex == null
+                                ? 0.0
+                                : (_chartXForIndex(
+                                            selectedIndex,
+                                            points.length,
+                                            width,
+                                          ) -
+                                          tooltipWidth / 2)
+                                      .clamp(
+                                        0.0,
+                                        math.max(0.0, width - tooltipWidth),
+                                      )
+                                      .toDouble();
 
-                      void selectAtOffset(Offset localPosition) {
-                        setState(() {
-                          _selectedMacroPointIndex = _chartIndexForDx(
-                            localPosition.dx,
-                            points.length,
-                            width,
-                          );
-                        });
-                      }
+                            void selectAtOffset(Offset localPosition) {
+                              setState(() {
+                                _selectedMacroPointIndex = _chartIndexForDx(
+                                  localPosition.dx,
+                                  points.length,
+                                  width,
+                                );
+                              });
+                            }
 
-                      return GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTapDown: (details) =>
-                            selectAtOffset(details.localPosition),
-                        onHorizontalDragStart: (details) =>
-                            selectAtOffset(details.localPosition),
-                        onHorizontalDragUpdate: (details) =>
-                            selectAtOffset(details.localPosition),
-                        child: Stack(
-                          children: [
-                            AnimatedBuilder(
-                              animation: _chartAnimation,
-                              builder: (context, _) => CustomPaint(
-                                painter: _MacroTrendChartPainter(
-                                  points: points,
-                                  progress: _chartAnimation.value,
-                                  selectedIndex: selectedIndex,
-                                  showProtein: _showProteinTrend,
-                                  showFat: _showFatTrend,
-                                  showCarb: _showCarbTrend,
-                                  proteinColor: _cs.primary,
-                                  fatColor: _cs.secondary,
-                                  carbColor: _cs.tertiary,
-                                  guideColor: _cs.outlineVariant.withValues(
-                                    alpha: 0.2,
+                            return GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTapDown: (details) =>
+                                  selectAtOffset(details.localPosition),
+                              onHorizontalDragStart: (details) =>
+                                  selectAtOffset(details.localPosition),
+                              onHorizontalDragUpdate: (details) =>
+                                  selectAtOffset(details.localPosition),
+                              child: Stack(
+                                children: [
+                                  AnimatedBuilder(
+                                    animation: _chartAnimation,
+                                    builder: (context, _) => CustomPaint(
+                                      painter: _MacroTrendChartPainter(
+                                        points: points,
+                                        axisMax: axisScale.axisMax,
+                                        progress: _chartAnimation.value,
+                                        selectedIndex: selectedIndex,
+                                        showProtein: _showProteinTrend,
+                                        showFat: _showFatTrend,
+                                        showCarb: _showCarbTrend,
+                                        proteinColor: _cs.primary,
+                                        fatColor: _cs.secondary,
+                                        carbColor: _cs.tertiary,
+                                        guideColor: _cs.outlineVariant
+                                            .withValues(alpha: 0.2),
+                                        selectionColor: _cs.secondary,
+                                      ),
+                                      child: const SizedBox.expand(),
+                                    ),
                                   ),
-                                  selectionColor: _cs.secondary,
-                                ),
-                                child: const SizedBox.expand(),
+                                  if (selectedIndex != null)
+                                    Positioned(
+                                      left: tooltipLeft,
+                                      top: 0,
+                                      width: tooltipWidth,
+                                      child: _chartTooltip(
+                                        title: _chartTooltipDate(
+                                          points[selectedIndex].date,
+                                        ),
+                                        rows: [
+                                          if (_showProteinTrend)
+                                            (
+                                              _cs.primary,
+                                              '${_isRu ? 'Белки' : 'Protein'}: ${_formatOneDecimal(points[selectedIndex].proteins)} ${_isRu ? 'г' : 'g'}',
+                                            ),
+                                          if (_showFatTrend)
+                                            (
+                                              _cs.secondary,
+                                              '${_isRu ? 'Жиры' : 'Fat'}: ${_formatOneDecimal(points[selectedIndex].fats)} ${_isRu ? 'г' : 'g'}',
+                                            ),
+                                          if (_showCarbTrend)
+                                            (
+                                              _cs.tertiary,
+                                              '${_isRu ? 'Углеводы' : 'Carbs'}: ${_formatOneDecimal(points[selectedIndex].carbs)} ${_isRu ? 'г' : 'g'}',
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                ],
                               ),
-                            ),
-                            if (selectedIndex != null)
-                              Positioned(
-                                left: tooltipLeft,
-                                top: 0,
-                                width: tooltipWidth,
-                                child: _chartTooltip(
-                                  title: _chartTooltipDate(
-                                    points[selectedIndex].date,
-                                  ),
-                                  rows: [
-                                    if (_showProteinTrend)
-                                      (
-                                        _cs.primary,
-                                        '${_isRu ? 'Белки' : 'Protein'}: ${_formatOneDecimal(points[selectedIndex].proteins)} ${_isRu ? 'г' : 'g'}',
-                                      ),
-                                    if (_showFatTrend)
-                                      (
-                                        _cs.secondary,
-                                        '${_isRu ? 'Жиры' : 'Fat'}: ${_formatOneDecimal(points[selectedIndex].fats)} ${_isRu ? 'г' : 'g'}',
-                                      ),
-                                    if (_showCarbTrend)
-                                      (
-                                        _cs.tertiary,
-                                        '${_isRu ? 'Углеводы' : 'Carbs'}: ${_formatOneDecimal(points[selectedIndex].carbs)} ${_isRu ? 'г' : 'g'}',
-                                      ),
-                                  ],
-                                ),
-                              ),
-                          ],
+                            );
+                          },
                         ),
-                      );
-                    },
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    for (final point in points)
-                      Expanded(
-                        child: Text(
-                          point.label,
-                          textAlign: TextAlign.center,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: _cs.onSurfaceVariant,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12,
+                Padding(
+                  padding: const EdgeInsets.only(left: yAxisWidth + chartGap),
+                  child: Row(
+                    children: [
+                      for (final point in points)
+                        Expanded(
+                          child: Text(
+                            point.label,
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: _cs.onSurfaceVariant,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
                           ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1800,21 +2171,21 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
             spacing: 10,
             runSpacing: 10,
             children: [
-              _trendPill(
+              _macroAveragePill(
                 icon: Icons.fitness_center_rounded,
-                label: _isRu ? 'БЕЛКИ/ДЕНЬ' : 'PROTEIN/DAY',
+                label: _isRu ? 'Белки' : 'Protein',
                 value: '${_formatOneDecimal(proteinAvg)} ${_isRu ? 'г' : 'g'}',
                 accent: _cs.primary,
               ),
-              _trendPill(
+              _macroAveragePill(
                 icon: Icons.opacity_rounded,
-                label: _isRu ? 'ЖИРЫ/ДЕНЬ' : 'FAT/DAY',
+                label: _isRu ? 'Жиры' : 'Fat',
                 value: '${_formatOneDecimal(fatAvg)} ${_isRu ? 'г' : 'g'}',
                 accent: _cs.secondary,
               ),
-              _trendPill(
+              _macroAveragePill(
                 icon: Icons.grain_rounded,
-                label: _isRu ? 'УГЛЕВОДЫ/ДЕНЬ' : 'CARBS/DAY',
+                label: _isRu ? 'Углеводы' : 'Carbs',
                 value: '${_formatOneDecimal(carbAvg)} ${_isRu ? 'г' : 'g'}',
                 accent: _cs.tertiary,
               ),
@@ -1822,121 +2193,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildInsightPanels({
-    required int dailyCalories,
-    required int mealsCount,
-    required int expiringSoonCount,
-    required int usedPantryCount,
-  }) {
-    final fiberStreak = mealsCount >= 3 ? 5 : 3;
-    final gap = expiringSoonCount > 0
-        ? (_isRu ? 'магний и витамин D' : 'Magnesium and Vitamin D')
-        : (_isRu ? 'стабильность гидратации' : 'Hydration consistency');
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 720;
-        final first = Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: _cs.secondaryContainer,
-            borderRadius: BorderRadius.circular(28),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AtelierIconBadge(
-                icon: Icons.auto_awesome_rounded,
-                accent: _cs.onSecondaryContainer,
-              ),
-              const SizedBox(height: 18),
-              Text(
-                _isRu ? 'Серия по клетчатке' : 'High Fiber Streak',
-                style: TextStyle(
-                  color: _cs.onSecondaryContainer,
-                  fontSize: 26,
-                  fontWeight: FontWeight.w900,
-                  height: 1,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                _isRu
-                    ? 'Ты держишь плотный пищевой ритм уже $fiberStreak дней подряд. Использование кладовой и журнал приёмов пищи сейчас хорошо совпадают.'
-                    : 'You have kept a dense food rhythm for $fiberStreak days in a row. Pantry usage and meal log are lining up well.',
-                style: TextStyle(
-                  color: _cs.onSecondaryContainer.withValues(alpha: 0.82),
-                  fontWeight: FontWeight.w600,
-                  height: 1.35,
-                ),
-              ),
-            ],
-          ),
-        );
-
-        final second = Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: Color.alphaBlend(
-              _cs.surfaceContainerHighest.withValues(
-                alpha: _isDark ? 0.42 : 0.88,
-              ),
-              _cs.surface,
-            ),
-            borderRadius: BorderRadius.circular(28),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _isRu ? 'Дефицит микронутриентов' : 'Micronutrient Gap',
-                      style: const TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w900,
-                        height: 1,
-                      ),
-                    ),
-                  ),
-                  Icon(
-                    Icons.error_outline_rounded,
-                    color: _cs.tertiary,
-                    size: 30,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Text(
-                _isRu
-                    ? 'Сейчас внимание стоит держать на $gap. За день: $dailyCalories ккал, из кладовой использовано: $usedPantryCount.'
-                    : 'Keep an eye on $gap. Daily calories: $dailyCalories, pantry items used: $usedPantryCount.',
-                style: TextStyle(
-                  color: _cs.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                  height: 1.35,
-                ),
-              ),
-            ],
-          ),
-        );
-
-        if (!wide) {
-          return Column(children: [first, const SizedBox(height: 16), second]);
-        }
-
-        return Row(
-          children: [
-            Expanded(child: first),
-            const SizedBox(width: 16),
-            Expanded(child: second),
-          ],
-        );
-      },
     );
   }
 
@@ -2034,19 +2290,26 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
   @override
   Widget build(BuildContext context) {
     final rangeStart = _rangeStart();
-    final dailyCalories = _toInt(_daily?['totalCalories']);
     final mealsCount = _toInt(_daily?['mealsCount']);
     final expiringSoonCount = _toInt(_daily?['expiringSoonCount']);
     final weeklyCalories = _toDouble(_weekly?['totalCalories']);
     final usedPantryCount = _toInt(_weekly?['usedPantryItemsCount']);
-    final proteins = _toDouble(_macros?['proteins']);
-    final fats = _toDouble(_macros?['fats']);
-    final carbs = _toDouble(_macros?['carbohydrates']);
+    final proteins = _dailyMacroValue(const ['proteins', 'totalProteins']);
+    final fats = _dailyMacroValue(const ['fats', 'totalFats']);
+    final carbs = _dailyMacroValue(const [
+      'carbohydrates',
+      'totalCarbohydrates',
+    ]);
 
     final rawPoints =
         (_weekly?['dailyCalories'] as List?)?.cast<dynamic>() ?? const [];
     final points = _buildCaloriePointsFromAnalytics(
       rawPoints,
+      start: rangeStart,
+      days: _selectedPeriodDays,
+    );
+    final rhythmPoints = _buildRhythmPoints(
+      meals: _meals,
       start: rangeStart,
       days: _selectedPeriodDays,
     );
@@ -2063,13 +2326,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
       backgroundColor: _theme.scaffoldBackgroundColor,
       appBar: AppTopBar(
         title: _isRu ? 'Аналитика' : 'Analytics',
-        actions: [
-          AppTopAction(
-            icon: Icons.refresh_rounded,
-            onPressed: _load,
-            tooltip: _isRu ? 'Обновить' : 'Refresh',
-          ),
-        ],
+        actions: const [],
       ),
       body: RefreshIndicator(
         onRefresh: _load,
@@ -2163,19 +2420,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen>
               const SizedBox(height: 16),
               _animatedPeriodPane(
                 id: 'weekly-rhythm',
-                child: _buildWeeklyRhythmCard(points, averageCalories),
+                child: _buildWeeklyRhythmCard(rhythmPoints),
               ),
               const SizedBox(height: 16),
               _animatedPeriodPane(
                 id: 'macro-trend-${_showProteinTrend ? 1 : 0}${_showFatTrend ? 1 : 0}${_showCarbTrend ? 1 : 0}',
                 child: _buildMacroTrendSection(macroDayPoints),
-              ),
-              const SizedBox(height: 20),
-              _buildInsightPanels(
-                dailyCalories: dailyCalories,
-                mealsCount: mealsCount,
-                expiringSoonCount: expiringSoonCount,
-                usedPantryCount: usedPantryCount,
               ),
               const SizedBox(height: 20),
               _buildBiometricGrid(
@@ -2221,6 +2471,18 @@ class _MacroDayPoint {
   double get total => proteins + fats + carbs;
 }
 
+class _RhythmPoint {
+  final DateTime date;
+  final String label;
+  final int mealsCount;
+
+  const _RhythmPoint({
+    required this.date,
+    required this.label,
+    required this.mealsCount,
+  });
+}
+
 Path _buildInterpolatedChartPath(List<Offset> points) {
   final path = Path();
   if (points.isEmpty) return path;
@@ -2250,12 +2512,14 @@ Path _buildInterpolatedChartPath(List<Offset> points) {
       next.dx - (following.dx - current.dx) / 6,
       next.dy - (following.dy - current.dy) / 6,
     );
+    final segmentMinY = math.min(current.dy, next.dy);
+    final segmentMaxY = math.max(current.dy, next.dy);
 
     path.cubicTo(
       controlPoint1.dx,
-      controlPoint1.dy,
+      controlPoint1.dy.clamp(segmentMinY, segmentMaxY).toDouble(),
       controlPoint2.dx,
-      controlPoint2.dy,
+      controlPoint2.dy.clamp(segmentMinY, segmentMaxY).toDouble(),
       next.dx,
       next.dy,
     );
@@ -2267,6 +2531,7 @@ Path _buildInterpolatedChartPath(List<Offset> points) {
 class _WeeklyLineChartPainter extends CustomPainter {
   final List<double> values;
   final double averageValue;
+  final double axisMax;
   final double progress;
   final int? selectedIndex;
   final Color lineColor;
@@ -2280,6 +2545,7 @@ class _WeeklyLineChartPainter extends CustomPainter {
   const _WeeklyLineChartPainter({
     required this.values,
     required this.averageValue,
+    required this.axisMax,
     required this.progress,
     required this.selectedIndex,
     required this.lineColor,
@@ -2295,24 +2561,23 @@ class _WeeklyLineChartPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (values.isEmpty) return;
 
-    final maxValue = math.max(values.reduce(math.max), 1.0);
-    final minValue = math.min(values.reduce(math.min), 0.0);
-    final range = math.max(maxValue - minValue, 1.0);
+    final safeAxisMax = math.max(axisMax, 1.0);
     const topPadding = 12.0;
     const bottomPadding = 14.0;
     final height = size.height - topPadding - bottomPadding;
+    final chartBottom = size.height - bottomPadding;
     final width = size.width;
 
     final guidePaint = Paint()
       ..color = guideColor
-      ..strokeWidth = 1;
+      ..strokeWidth = 1.1;
     for (var i = 0; i < 4; i++) {
       final y = topPadding + height * (i / 3);
       canvas.drawLine(Offset(0, y), Offset(width, y), guidePaint);
     }
 
     final averageY =
-        topPadding + height - ((averageValue - minValue) / range) * height;
+        topPadding + height - (averageValue / safeAxisMax) * height;
     final averagePaint = Paint()
       ..color = averageGuideColor
       ..strokeWidth = 1.5
@@ -2337,12 +2602,12 @@ class _WeeklyLineChartPainter extends CustomPainter {
     for (var i = 0; i < values.length; i++) {
       final x = values.length == 1
           ? width / 2
-          : width * (i / (values.length - 1));
-      final normalized = (values[i] - minValue) / range;
+          : (width / values.length) * (i + 0.5);
+      final normalized = values[i] / safeAxisMax;
       final y = topPadding + height - normalized * height;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromLTWH(x - columnWidth / 2, y, columnWidth, size.height - y),
+          Rect.fromLTWH(x - columnWidth / 2, y, columnWidth, chartBottom - y),
           const Radius.circular(999),
         ),
         columnPaint,
@@ -2353,8 +2618,8 @@ class _WeeklyLineChartPainter extends CustomPainter {
     final linePath = _buildInterpolatedChartPath(points);
 
     final areaPath = Path.from(linePath)
-      ..lineTo(points.last.dx, size.height)
-      ..lineTo(points.first.dx, size.height)
+      ..lineTo(points.last.dx, chartBottom)
+      ..lineTo(points.first.dx, chartBottom)
       ..close();
 
     final fillPaint = Paint()
@@ -2428,6 +2693,7 @@ class _WeeklyLineChartPainter extends CustomPainter {
   bool shouldRepaint(covariant _WeeklyLineChartPainter oldDelegate) {
     return oldDelegate.values != values ||
         oldDelegate.averageValue != averageValue ||
+        oldDelegate.axisMax != axisMax ||
         oldDelegate.progress != progress ||
         oldDelegate.selectedIndex != selectedIndex ||
         oldDelegate.lineColor != lineColor ||
@@ -2443,6 +2709,7 @@ class _WeeklyLineChartPainter extends CustomPainter {
 class _MacroTrendChartPainter extends CustomPainter {
   const _MacroTrendChartPainter({
     required this.points,
+    required this.axisMax,
     required this.progress,
     required this.selectedIndex,
     required this.showProtein,
@@ -2456,6 +2723,7 @@ class _MacroTrendChartPainter extends CustomPainter {
   });
 
   final List<_MacroDayPoint> points;
+  final double axisMax;
   final double progress;
   final int? selectedIndex;
   final bool showProtein;
@@ -2474,16 +2742,9 @@ class _MacroTrendChartPainter extends CustomPainter {
     const topPadding = 12.0;
     const bottomPadding = 14.0;
     final height = size.height - topPadding - bottomPadding;
+    final chartBottom = size.height - bottomPadding;
     final width = size.width;
-    final maxValue = math.max(
-      1.0,
-      points
-          .map(
-            (point) =>
-                math.max(point.proteins, math.max(point.fats, point.carbs)),
-          )
-          .reduce(math.max),
-    );
+    final safeAxisMax = math.max(axisMax, 1.0);
 
     final guidePaint = Paint()
       ..color = guideColor
@@ -2493,59 +2754,75 @@ class _MacroTrendChartPainter extends CustomPainter {
       canvas.drawLine(Offset(0, y), Offset(width, y), guidePaint);
     }
 
-    double xFor(int index) =>
-        points.length == 1 ? width / 2 : width * (index / (points.length - 1));
+    double xFor(int index) {
+      if (points.length == 1) return width / 2;
+      final segmentWidth = width / points.length;
+      return segmentWidth * (index + 0.5);
+    }
 
     double yFor(double value) =>
-        topPadding + height - (value / maxValue) * height;
+        topPadding + height - (value / safeAxisMax) * height;
 
-    void drawSeries(List<double> values, Color color) {
-      final seriesPoints = <Offset>[];
-      for (var i = 0; i < values.length; i++) {
-        seriesPoints.add(Offset(xFor(i), yFor(values[i])));
-      }
+    final activeSeries = <({List<double> values, Color color})>[
+      if (showProtein)
+        (
+          values: points.map((point) => point.proteins).toList(),
+          color: proteinColor,
+        ),
+      if (showFat)
+        (values: points.map((point) => point.fats).toList(), color: fatColor),
+      if (showCarb)
+        (values: points.map((point) => point.carbs).toList(), color: carbColor),
+    ];
+    if (activeSeries.isEmpty) return;
 
-      final path = _buildInterpolatedChartPath(seriesPoints);
-
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = color.withValues(alpha: 0.18)
-          ..strokeWidth = 8
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-      );
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = color
-          ..strokeWidth = 2.8
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round,
-      );
-      for (final point in seriesPoints) {
-        canvas.drawCircle(
-          point,
-          3.5,
-          Paint()..color = Colors.white.withValues(alpha: 0.92),
-        );
-        canvas.drawCircle(point, 2, Paint()..color = color);
-      }
-    }
+    final segmentWidth = points.length <= 1 ? width : width / points.length;
+    final clusterWidth = math.min(segmentWidth * 0.74, 42.0);
+    final spacing = activeSeries.length <= 1 ? 0.0 : 3.0;
+    final barWidth =
+        (clusterWidth - spacing * (activeSeries.length - 1)) /
+        activeSeries.length;
 
     canvas.save();
     canvas.clipRect(
       Rect.fromLTWH(0, 0, size.width * progress.clamp(0.0, 1.0), size.height),
     );
-    if (showProtein) {
-      drawSeries(points.map((point) => point.proteins).toList(), proteinColor);
-    }
-    if (showFat) {
-      drawSeries(points.map((point) => point.fats).toList(), fatColor);
-    }
-    if (showCarb) {
-      drawSeries(points.map((point) => point.carbs).toList(), carbColor);
+
+    for (var dayIndex = 0; dayIndex < points.length; dayIndex++) {
+      final centerX = xFor(dayIndex);
+      final clusterLeft = centerX - clusterWidth / 2;
+
+      for (
+        var seriesIndex = 0;
+        seriesIndex < activeSeries.length;
+        seriesIndex++
+      ) {
+        final series = activeSeries[seriesIndex];
+        final value = series.values[dayIndex];
+        final top = yFor(value);
+        final left = clusterLeft + seriesIndex * (barWidth + spacing);
+        final rect = Rect.fromLTWH(
+          left,
+          top,
+          barWidth,
+          math.max(0.0, chartBottom - top),
+        );
+
+        final fill = Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              series.color.withValues(alpha: 0.95),
+              series.color.withValues(alpha: 0.58),
+            ],
+          ).createShader(rect);
+
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(rect, const Radius.circular(999)),
+          fill,
+        );
+      }
     }
     canvas.restore();
 
@@ -2558,8 +2835,8 @@ class _MacroTrendChartPainter extends CustomPainter {
           Offset(selectedX, topPadding),
           Offset(selectedX, size.height - bottomPadding),
           Paint()
-            ..color = selectionColor.withValues(alpha: 0.28)
-            ..strokeWidth = 1.5,
+            ..color = selectionColor.withValues(alpha: 0.34)
+            ..strokeWidth = 1.6,
         );
       }
     }
@@ -2568,6 +2845,7 @@ class _MacroTrendChartPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _MacroTrendChartPainter oldDelegate) {
     return oldDelegate.points != points ||
+        oldDelegate.axisMax != axisMax ||
         oldDelegate.progress != progress ||
         oldDelegate.selectedIndex != selectedIndex ||
         oldDelegate.showProtein != showProtein ||
@@ -2576,6 +2854,106 @@ class _MacroTrendChartPainter extends CustomPainter {
         oldDelegate.proteinColor != proteinColor ||
         oldDelegate.fatColor != fatColor ||
         oldDelegate.carbColor != carbColor ||
+        oldDelegate.guideColor != guideColor ||
+        oldDelegate.selectionColor != selectionColor;
+  }
+}
+
+class _RhythmBarChartPainter extends CustomPainter {
+  const _RhythmBarChartPainter({
+    required this.points,
+    required this.axisMax,
+    required this.selectedIndex,
+    required this.barColor,
+    required this.guideColor,
+    required this.selectionColor,
+  });
+
+  final List<_RhythmPoint> points;
+  final double axisMax;
+  final int? selectedIndex;
+  final Color barColor;
+  final Color guideColor;
+  final Color selectionColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (points.isEmpty) return;
+
+    const topPadding = 10.0;
+    const bottomPadding = 12.0;
+    final height = size.height - topPadding - bottomPadding;
+    final chartBottom = size.height - bottomPadding;
+    final width = size.width;
+    final safeAxisMax = math.max(axisMax, 1.0);
+
+    final guidePaint = Paint()
+      ..color = guideColor
+      ..strokeWidth = 1;
+    for (var i = 0; i < 4; i++) {
+      final y = topPadding + height * (i / 3);
+      canvas.drawLine(Offset(0, y), Offset(width, y), guidePaint);
+    }
+
+    final segmentWidth = points.length <= 1 ? width : width / points.length;
+    final barWidth = math.min(segmentWidth * 0.54, 16.0);
+    final fill = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          barColor.withValues(alpha: 0.92),
+          barColor.withValues(alpha: 0.62),
+        ],
+      ).createShader(Offset.zero & size);
+
+    for (var i = 0; i < points.length; i++) {
+      final centerX = points.length == 1
+          ? width / 2
+          : (width / points.length) * (i + 0.5);
+      final top =
+          topPadding + height - (points[i].mealsCount / safeAxisMax) * height;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            centerX - barWidth / 2,
+            top,
+            barWidth,
+            math.max(0.0, chartBottom - top),
+          ),
+          const Radius.circular(999),
+        ),
+        fill,
+      );
+    }
+
+    if (selectedIndex != null &&
+        selectedIndex! >= 0 &&
+        selectedIndex! < points.length) {
+      final selectedX = points.length == 1
+          ? width / 2
+          : (width / points.length) * (selectedIndex! + 0.5);
+      canvas.drawLine(
+        Offset(selectedX, topPadding),
+        Offset(selectedX, chartBottom),
+        Paint()
+          ..color = selectionColor.withValues(alpha: 0.28)
+          ..strokeWidth = 1.5,
+      );
+      canvas.drawCircle(
+        Offset(selectedX, chartBottom - 2),
+        4,
+        Paint()..color = selectionColor,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RhythmBarChartPainter oldDelegate) {
+    return oldDelegate.points != points ||
+        oldDelegate.axisMax != axisMax ||
+        oldDelegate.selectedIndex != selectedIndex ||
+        oldDelegate.barColor != barColor ||
         oldDelegate.guideColor != guideColor ||
         oldDelegate.selectionColor != selectionColor;
   }

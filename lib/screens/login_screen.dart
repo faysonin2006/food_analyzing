@@ -241,13 +241,13 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                 ),
                                 const SizedBox(height: 10),
-                                Text(
-                                  _isRu
-                                      ? 'Продолжим с того места,\nгде остановились.'
-                                      : 'Let’s pick up right\nwhere you left off.',
-                                  style: theme.textTheme.headlineSmall
-                                      ?.copyWith(height: 0.98),
-                                ),
+                                // Text(
+                                //   _isRu
+                                //       ? 'Продолжим с того места,\nгде остановились.'
+                                //       : 'Let’s pick up right\nwhere you left off.',
+                                //   style: theme.textTheme.headlineSmall
+                                //       ?.copyWith(height: 0.98),
+                                // ),
                                 const SizedBox(height: 22),
                                 _authLabel(_isRu ? 'Email' : 'Email address'),
                                 TextField(
@@ -380,7 +380,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               ],
                             ),
                           ),
-                          const SizedBox(height: 28),
+                          const SizedBox(height: 20),
                           Wrap(
                             alignment: WrapAlignment.center,
                             crossAxisAlignment: WrapCrossAlignment.center,
@@ -419,10 +419,20 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               SafeArea(
                 child: Align(
-                  alignment: Alignment.topRight,
+                  alignment: Alignment.topCenter,
                   child: Padding(
-                    padding: const EdgeInsets.only(top: 8, right: 10),
-                    child: _settingsButton(context),
+                    padding: const EdgeInsets.only(top: 8, left: 10, right: 10),
+                    child: Row(
+                      children: [
+                        if (Navigator.canPop(context))
+                          IconButton.filledTonal(
+                            onPressed: () => Navigator.of(context).maybePop(),
+                            icon: const Icon(Icons.arrow_back_rounded),
+                          ),
+                        const Spacer(),
+                        _settingsButton(context),
+                      ],
+                    ),
                   ),
                 ),
               ),

@@ -63,40 +63,34 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            tr(context, 'analysis_questions_title'),
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800,
-                            ),
+                    AtelierSheetHeader(
+                      title: tr(context, 'analysis_questions_title'),
+                      subtitle: _isRu
+                          ? 'Выбери вопросы, которые стоит учесть в анализе.'
+                          : 'Choose the questions that should guide the analysis.',
+                      trailing: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _blendWithSurface(
+                            _cs.primary,
+                            _isDarkTheme ? 0.3 : 0.12,
+                          ),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          '${_selectedQuestionIds.length}/${_AnalyzeScreenState._maxSelectedQuestions}',
+                          style: TextStyle(
+                            color: _cs.primary,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: _blendWithSurface(
-                              _cs.primary,
-                              _isDarkTheme ? 0.3 : 0.12,
-                            ),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            '${_selectedQuestionIds.length}/${_AnalyzeScreenState._maxSelectedQuestions}',
-                            style: TextStyle(
-                              color: _cs.primary,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
+                      ),
+                      onClose: () => Navigator.of(sheetContext).maybePop(),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                     TextField(
                       onChanged: (value) =>
                           setSheetState(() => localQuery = value),
@@ -188,18 +182,7 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
               height: 0.94,
             ),
           ),
-          const SizedBox(height: 10),
-          Text(
-            _isRu
-                ? 'Загрузи блюдо, добавь фокусные вопросы и получи редакционный разбор, который можно сразу сохранить в журнал питания.'
-                : 'Upload a dish, add focused questions, and get an editorial breakdown you can save straight into your meal journal.',
-            style: TextStyle(
-              color: _cs.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
-              height: 1.35,
-            ),
-          ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 220),
             child: _selectedImage != null
@@ -288,6 +271,81 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
               ),
             ],
           ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: _cs.surface.withValues(alpha: 0.82),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: _cs.outlineVariant.withValues(alpha: 0.34),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    AtelierIconBadge(
+                      icon: Icons.straighten_rounded,
+                      accent: _AnalyzeScreenState._accentOrange,
+                      size: 34,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _isRu ? 'Как считать КБЖУ' : 'How to calculate',
+                        style: TextStyle(
+                          color: _cs.onSurface,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                SegmentedButton<String>(
+                  showSelectedIcon: false,
+                  segments: [
+                    ButtonSegment<String>(
+                      value: _AnalyzeScreenState._analysisBasisPer100g,
+                      icon: const Icon(Icons.scale_rounded),
+                      label: Text(_isRu ? 'На 100 г' : 'Per 100 g'),
+                    ),
+                    ButtonSegment<String>(
+                      value: _AnalyzeScreenState._analysisBasisFullPortion,
+                      icon: const Icon(Icons.dining_rounded),
+                      label: Text(_isRu ? 'Вся порция' : 'Full portion'),
+                    ),
+                  ],
+                  selected: <String>{_selectedAnalysisBasis},
+                  onSelectionChanged: (selection) {
+                    final basis = selection.isEmpty
+                        ? _AnalyzeScreenState._analysisBasisPer100g
+                        : selection.first;
+                    _setAnalysisBasis(basis);
+                  },
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  _selectedAnalysisBasis ==
+                          _AnalyzeScreenState._analysisBasisFullPortion
+                      ? (_isRu
+                            ? 'AI вернёт КБЖУ для всей порции и попробует оценить её примерный вес.'
+                            : 'AI will return calories and macros for the whole portion and estimate its approximate weight.')
+                      : (_isRu
+                            ? 'AI вернёт КБЖУ на 100 г или 100 мл.'
+                            : 'AI will return calories and macros per 100 g or 100 ml.'),
+                  style: TextStyle(
+                    color: _cs.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                    height: 1.28,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -307,8 +365,8 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
                 ? 'Выбери важные вопросы, чтобы AI дал более полезный и точный разбор.'
                 : 'Pick the questions that matter so the AI answer becomes more precise and useful.',
           ),
-          const SizedBox(height: 12),
-          ..._coreQuestionPresets.map((item) {
+          const SizedBox(height: 14),
+          ..._visibleQuestionPresets.map((item) {
             final selected = _selectedQuestionIds.contains(item.id);
             return CheckboxListTile(
               contentPadding: EdgeInsets.zero,
@@ -323,25 +381,6 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
               },
             );
           }),
-          if (_selectedQuestionIds.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _selectedQuestionIds
-                  .map(
-                    (id) => AtelierTagChip(
-                      label: _questionTextById(id),
-                      foreground: _AnalyzeScreenState._accentOrangeDeep,
-                      background: _blendWithSurface(
-                        _AnalyzeScreenState._accentOrange,
-                        0.14,
-                      ),
-                    ),
-                  )
-                  .toList(),
-            ),
-          ],
           const SizedBox(height: 16),
           Align(
             alignment: Alignment.centerRight,
@@ -414,11 +453,12 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
 
     final dishName = _historyDishName(result);
     final calories = result['calories']?.toString() ?? '-';
-    final protein = result['protein']?.toString() ?? '-';
-    final fats = result['fats']?.toString() ?? '-';
-    final carbs = result['carbs']?.toString() ?? '-';
+    final protein = _formatAnalysisMacro(_readAnalysisMacro(result, 'protein'));
+    final fats = _formatAnalysisMacro(_readAnalysisMacro(result, 'fats'));
+    final carbs = _formatAnalysisMacro(_readAnalysisMacro(result, 'carbs'));
+    final analysisBasis = _analysisBasisOf(result);
+    final estimatedWeightCaption = _analysisEstimatedWeightCaption(result);
     final extraInfo = _analysisExtraInfo(result);
-    final alreadySaved = _analysisAlreadySaved(result);
     final healthScore = _analysisHealthScore(result);
     final scoreLabel = healthScore == null
         ? null
@@ -507,14 +547,22 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
                               ),
                               const SizedBox(height: 8),
                               Text(
-                                _isRu
-                                    ? 'Домашний анализ • Сейчас'
-                                    : 'Home kitchen analysis • Just now',
+                                _analysisBasisHeadline(analysisBasis),
                                 style: TextStyle(
                                   color: _cs.onSurfaceVariant,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
+                              if (estimatedWeightCaption.isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  estimatedWeightCaption,
+                                  style: TextStyle(
+                                    color: _cs.onSurfaceVariant,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -553,29 +601,29 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
         Row(
           children: [
             Expanded(
-              child: AtelierMetricTile(
+              child: _analysisMacroCard(
                 label: tr(context, 'protein'),
-                value: '$protein g',
+                value: '$protein ${tr(context, 'grams')}',
                 accent: _cs.primary,
-                center: true,
+                basisLabel: _analysisBasisShortLabel(analysisBasis),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: AtelierMetricTile(
-                label: tr(context, 'carbs'),
-                value: '$carbs g',
-                accent: _cs.secondary,
-                center: true,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: AtelierMetricTile(
+              child: _analysisMacroCard(
                 label: tr(context, 'fats'),
-                value: '$fats g',
+                value: '$fats ${tr(context, 'grams')}',
                 accent: _cs.tertiary,
-                center: true,
+                basisLabel: _analysisBasisShortLabel(analysisBasis),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _analysisMacroCard(
+                label: tr(context, 'carbs'),
+                value: '$carbs ${tr(context, 'grams')}',
+                accent: _cs.secondary,
+                basisLabel: _analysisBasisShortLabel(analysisBasis),
               ),
             ),
           ],
@@ -598,9 +646,7 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          _isRu
-                              ? 'Nutritionist Insights'
-                              : 'Nutritionist Insights',
+                          tr(context, 'nutritionist_insights'),
                           style: const TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w900,
@@ -733,24 +779,14 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
         SizedBox(
           width: double.infinity,
           child: FilledButton.icon(
-            onPressed: alreadySaved || _isSavingMeal
-                ? null
-                : _saveAnalysisAsMeal,
-            icon: Icon(
-              alreadySaved
-                  ? Icons.check_circle_rounded
-                  : Icons.bookmark_add_rounded,
-            ),
+            onPressed: _isSavingMeal ? null : _saveAnalysisAsMeal,
+            icon: const Icon(Icons.bookmark_add_rounded),
             label: Text(
-              alreadySaved
-                  ? (_isRu
-                        ? 'Уже сохранено в журнал питания'
-                        : 'Already saved to meal journal')
-                  : (_isSavingMeal
-                        ? (_isRu ? 'Сохраняем...' : 'Saving...')
-                        : (_isRu
-                              ? 'Сохранить в журнал питания'
-                              : 'Save to Meal Journal')),
+              _isSavingMeal
+                  ? (_isRu ? 'Сохраняем...' : 'Saving...')
+                  : (_isRu
+                        ? 'Сохранить в журнал питания'
+                        : 'Save to Meal Journal'),
             ),
           ),
         ),
@@ -767,16 +803,171 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
     );
   }
 
-  Widget _buildHistoryPhoto(Map<String, dynamic> item, {double size = 72}) {
-    final photoValue =
-        item['photo'] ??
-        item['photo_url'] ??
-        item['imagePath'] ??
-        item['image_path'] ??
-        item['image_url'];
+  Widget _analysisMacroCard({
+    required String label,
+    required String value,
+    required Color accent,
+    required String basisLabel,
+  }) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 104),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 11),
+      decoration: BoxDecoration(
+        color: Color.alphaBlend(
+          accent.withValues(
+            alpha: _theme.brightness == Brightness.dark ? 0.18 : 0.08,
+          ),
+          _cs.surface,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: accent.withValues(alpha: 0.16)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 9,
+                height: 9,
+                decoration: BoxDecoration(
+                  color: accent,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: SizedBox(
+                  height: 16,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        color: _cs.onSurfaceVariant,
+                        fontSize: 11.8,
+                        fontWeight: FontWeight.w800,
+                        height: 1.0,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: TextStyle(
+                color: accent,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                height: 1.0,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: Container(
+              height: 6,
+              color: accent.withValues(alpha: 0.14),
+              child: FractionallySizedBox(
+                widthFactor: 0.82,
+                alignment: Alignment.centerLeft,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: accent,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 7),
+          SizedBox(
+            height: 14,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                basisLabel,
+                style: TextStyle(
+                  color: _cs.onSurfaceVariant,
+                  fontSize: 10.8,
+                  fontWeight: FontWeight.w700,
+                  height: 1.0,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-    final path = photoValue?.toString().trim() ?? '';
-    if (path.isEmpty) {
+  Widget _buildHistoryPhoto(Map<String, dynamic> item, {double size = 72}) {
+    final localPath =
+        <String>[
+          item['imagePath']?.toString().trim() ?? '',
+          item['image_path']?.toString().trim() ?? '',
+          item['photo']?.toString().trim() ?? '',
+        ].firstWhere((value) {
+          if (value.isEmpty ||
+              value.startsWith('http://') ||
+              value.startsWith('https://')) {
+            return false;
+          }
+          return File(value).existsSync();
+        }, orElse: () => '');
+
+    final remoteCandidates = <String>[
+      item['imageUrl']?.toString().trim() ?? '',
+      item['image_url']?.toString().trim() ?? '',
+      item['photoUrl']?.toString().trim() ?? '',
+      item['photo_url']?.toString().trim() ?? '',
+    ].where((value) => value.isNotEmpty).toList(growable: false);
+
+    final remotePath = remoteCandidates.firstWhere(
+      (value) => value.startsWith('http://') || value.startsWith('https://'),
+      orElse: () => '',
+    );
+    if (remotePath.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.network(
+          remotePath,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => localPath.isNotEmpty
+              ? Image.file(
+                  File(localPath),
+                  width: size,
+                  height: size,
+                  fit: BoxFit.cover,
+                )
+              : Container(
+                  width: size,
+                  height: size,
+                  color: _blendWithSurface(
+                    _AnalyzeScreenState._accentOrange,
+                    0.12,
+                  ),
+                  child: Icon(
+                    Icons.broken_image_rounded,
+                    color: _AnalyzeScreenState._accentOrangeDeep,
+                  ),
+                ),
+        ),
+      );
+    }
+
+    if (localPath.isEmpty) {
       return Container(
         width: size,
         height: size,
@@ -791,46 +982,14 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
       );
     }
 
-    if (path.startsWith('http://') || path.startsWith('https://')) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.network(
-          path,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => Container(
-            width: size,
-            height: size,
-            color: _blendWithSurface(_AnalyzeScreenState._accentOrange, 0.12),
-            child: Icon(
-              Icons.broken_image_rounded,
-              color: _AnalyzeScreenState._accentOrangeDeep,
-            ),
-          ),
-        ),
-      );
-    }
-
-    final file = File(path);
-    if (!file.existsSync()) {
-      return Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: _blendWithSurface(_AnalyzeScreenState._accentOrange, 0.12),
-        ),
-        child: Icon(
-          Icons.image_not_supported_rounded,
-          color: _AnalyzeScreenState._accentOrangeDeep,
-        ),
-      );
-    }
-
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: Image.file(file, width: size, height: size, fit: BoxFit.cover),
+      child: Image.file(
+        File(localPath),
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+      ),
     );
   }
 
@@ -974,7 +1133,6 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
     final errorMessage = _analysisErrorMessage(item);
     final healthScore = _analysisHealthScore(item);
     final canSave = _analysisCanBeSaved(item);
-    final alreadySaved = _analysisAlreadySaved(item);
     final isFood = _analysisFoodDetected(item);
 
     showModalBottomSheet<void>(
@@ -1066,27 +1224,15 @@ extension _AnalyzeScreenUi on _AnalyzeScreenState {
                 ),
               ],
             ],
-            if (canSave || alreadySaved) ...[
+            if (canSave) ...[
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
-                  onPressed: alreadySaved
-                      ? null
-                      : () => _saveAnalysisItemAsMeal(item),
-                  icon: Icon(
-                    alreadySaved
-                        ? Icons.check_circle_rounded
-                        : Icons.restaurant_menu_rounded,
-                  ),
+                  onPressed: () => _saveAnalysisItemAsMeal(item),
+                  icon: const Icon(Icons.restaurant_menu_rounded),
                   label: Text(
-                    alreadySaved
-                        ? (_isRu
-                              ? 'Уже добавлено в съеденное'
-                              : 'Already added to eaten food')
-                        : (_isRu
-                              ? 'Добавить в съеденное'
-                              : 'Add to eaten food'),
+                    _isRu ? 'Добавить в съеденное' : 'Add to eaten food',
                   ),
                 ),
               ),

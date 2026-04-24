@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../core/app_feedback.dart';
 import '../core/live_refresh.dart';
-import '../core/app_theme.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
 import '../repositories/app_repository.dart';
@@ -45,7 +44,7 @@ class _HouseholdScreenState extends State<HouseholdScreen>
     String message, {
     AppFeedbackKind? kind,
     bool preferPopup = false,
-    bool addToInbox = true,
+    bool addToInbox = false,
   }) {
     if (!mounted) return;
     showAppFeedback(
@@ -270,7 +269,6 @@ class _HouseholdScreenState extends State<HouseholdScreen>
       appBar: AppTopBar(
         title: _isRu ? 'Семья' : 'Household',
         actions: [
-          AppTopAction(icon: Icons.refresh_rounded, onPressed: _load),
           AppTopAction(
             icon: Icons.group_add_rounded,
             onPressed: _createHousehold,
@@ -287,18 +285,10 @@ class _HouseholdScreenState extends State<HouseholdScreen>
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
           children: [
-            AtelierHeroCard(
-              eyebrow: 'The Organic Atelier',
-              title: _isRu ? 'Семья\nи дом' : 'Shared\nhousehold',
-              subtitle: _isRu
-                  ? 'Объединяй покупки, приглашения и общий продуктовый ритм.'
-                  : 'Bring invitations, shopping, and shared home rhythm together.',
-              gradientColors: [
-                _cs.primary.withValues(alpha: 0.14),
-                AppTheme.atelierLime.withValues(alpha: 0.16),
-                AppTheme.atelierHoney.withValues(alpha: 0.08),
-              ],
-              pills: [
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
                 AtelierStatPill(
                   icon: Icons.groups_rounded,
                   label: _isRu
@@ -315,7 +305,7 @@ class _HouseholdScreenState extends State<HouseholdScreen>
                 ),
               ],
             ),
-            const SizedBox(height: 28),
+            const SizedBox(height: 18),
             if (_loading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 32),

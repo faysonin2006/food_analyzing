@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../core/app_theme.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
-import '../core/food_suggestions.dart';
-import '../core/suggestion_panel.dart';
 import '../repositories/app_repository.dart';
+import 'meals/meal_composer_sheet.dart';
 
 class MealHistoryScreen extends StatefulWidget {
   const MealHistoryScreen({super.key, this.openComposerOnStart = false});
@@ -73,6 +71,8 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
     switch (raw.trim().toUpperCase()) {
       case 'MANUAL':
         return _isRu ? 'Ручная запись' : 'Manual';
+      case 'IMPORTED':
+        return _isRu ? 'Продукт' : 'Product';
       case 'AI':
       case 'ANALYSIS':
         return _isRu ? 'AI анализ' : 'AI analysis';
@@ -85,12 +85,59 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
     switch (raw.trim().toUpperCase()) {
       case 'MANUAL':
         return _cs.primary;
+      case 'IMPORTED':
+        return _cs.secondary;
       case 'AI':
       case 'ANALYSIS':
         return _cs.tertiary;
       default:
         return _cs.secondary;
     }
+  }
+
+  double? _toDouble(dynamic raw) {
+    if (raw is num) return raw.toDouble();
+    return double.tryParse(raw?.toString().trim().replaceAll(',', '.') ?? '');
+  }
+
+  String _formatCompactNumber(num? value) {
+    if (value == null) return '-';
+    final normalized = value.toDouble();
+    final formatted = normalized == normalized.roundToDouble()
+        ? normalized.toInt().toString()
+        : normalized.toStringAsFixed(1);
+    return _isRu ? formatted.replaceAll('.', ',') : formatted;
+  }
+
+  String? _portionBreakdownLabel(Map<String, dynamic> item) {
+    final mode = item['amountMode']?.toString().trim().toUpperCase() ?? '';
+    if (mode == 'GRAMS' || mode == 'PERCENT') {
+      final eatenWeight = _toDouble(item['eatenWeightGrams']);
+      final totalWeight = _toDouble(item['totalWeightGrams']);
+      final ratio = _toDouble(item['eatenRatio']);
+      if (eatenWeight == null ||
+          eatenWeight <= 0 ||
+          totalWeight == null ||
+          totalWeight <= 0) {
+        return null;
+      }
+      if ((totalWeight - 100).abs() < 0.01) {
+        if ((eatenWeight - totalWeight).abs() < 0.01) return null;
+        return _isRu
+            ? '${_formatCompactNumber(eatenWeight)} г съедено'
+            : '${_formatCompactNumber(eatenWeight)} g eaten';
+      }
+      if ((eatenWeight - totalWeight).abs() < 0.01) return null;
+      final ratioSuffix = mode == 'PERCENT' && ratio != null && ratio > 0
+          ? (_isRu
+                ? ' • ${(ratio * 100).round()}%'
+                : ' • ${(ratio * 100).round()}%')
+          : '';
+      return _isRu
+          ? '${_formatCompactNumber(eatenWeight)} г из ${_formatCompactNumber(totalWeight)} г$ratioSuffix'
+          : '${_formatCompactNumber(eatenWeight)} g of ${_formatCompactNumber(totalWeight)} g$ratioSuffix';
+    }
+    return null;
   }
 
   Future<void> _pickDate(bool isFrom) async {
@@ -122,248 +169,128 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
     await _load();
   }
 
-  Future<void> _addMeal() async {
-    final titleCtrl = TextEditingController();
-    final caloriesCtrl = TextEditingController();
-    final proteinsCtrl = TextEditingController();
-    final fatsCtrl = TextEditingController();
-    final carbsCtrl = TextEditingController();
-    final notesCtrl = TextEditingController();
-    var mealSuggestions = const <SuggestionOption>[];
-    DateTime eatenAt = DateTime.now();
+  String _formatDateOnly(DateTime date) {
+    final y = date.year.toString().padLeft(4, '0');
+    final m = date.month.toString().padLeft(2, '0');
+    final d = date.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
 
-    void refreshMealSuggestions(StateSetter setSheetState) {
-      final query = titleCtrl.text;
-      final candidates = FoodSuggestions.collectMealSuggestions(
-        isRu: _isRu,
+  String _periodLabel() {
+    if (_dateFrom == null && _dateTo == null) {
+      return _isRu ? 'Весь период' : 'All time';
+    }
+    if (_dateFrom != null && _dateTo != null) {
+      return '${_formatDateOnly(_dateFrom!)} - ${_formatDateOnly(_dateTo!)}';
+    }
+    if (_dateFrom != null) {
+      return _isRu
+          ? 'С ${_formatDateOnly(_dateFrom!)}'
+          : 'From ${_formatDateOnly(_dateFrom!)}';
+    }
+    return _isRu
+        ? 'До ${_formatDateOnly(_dateTo!)}'
+        : 'Until ${_formatDateOnly(_dateTo!)}';
+  }
+
+  Future<void> _addMeal() async {
+    final currentContext = context;
+    final mode = await _showAddMealOptions();
+    if (!mounted || !currentContext.mounted || mode == null) return;
+
+    bool? created;
+    if (mode == MealComposerMode.product) {
+      created = await showProductMealComposerFlow(
+        context: currentContext,
+        repository: repository,
         mealItems: _items,
       );
-      final local = FoodSuggestions.rankSuggestions(
-        candidates,
-        query: query,
-        limit: 8,
+    } else {
+      created = await showMealComposerSheet(
+        context: currentContext,
+        repository: repository,
+        mealItems: _items,
+        initialMode: mode,
       );
-      setSheetState(() => mealSuggestions = local);
     }
-
-    final created = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setSheetState) => AtelierSheetFrame(
-          title: _isRu ? 'Добавить прием пищи' : 'Add meal',
-          subtitle: _isRu
-              ? 'Сохрани ручную запись, чтобы она сразу попала в аналитику и историю.'
-              : 'Save a manual entry so it appears immediately in your history and analytics.',
-          onClose: () => Navigator.of(context).pop(),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AtelierFieldLabel(_isRu ? 'Название' : 'Title'),
-              TextFieldTapRegion(
-                child: Column(
-                  children: [
-                    TextField(
-                      controller: titleCtrl,
-                      onTap: () => refreshMealSuggestions(setSheetState),
-                      onChanged: (_) => refreshMealSuggestions(setSheetState),
-                      onTapOutside: (_) {
-                        FocusScope.of(context).unfocus();
-                        setSheetState(() {
-                          mealSuggestions = const <SuggestionOption>[];
-                        });
-                      },
-                      decoration: InputDecoration(
-                        hintText: _isRu
-                            ? 'Например, овсянка'
-                            : 'For example, oatmeal',
-                      ),
-                    ),
-                    if (mealSuggestions.isNotEmpty)
-                      AtelierSuggestionPanel(
-                        suggestions: mealSuggestions,
-                        isRu: _isRu,
-                        onSelected: (option) {
-                          titleCtrl.text = option.primaryText;
-                          titleCtrl.selection = TextSelection.collapsed(
-                            offset: titleCtrl.text.length,
-                          );
-                          if (option.calories != null) {
-                            caloriesCtrl.text = option.calories!.toString();
-                          }
-                          if (option.protein != null) {
-                            proteinsCtrl.text = option.protein!.toStringAsFixed(
-                              option.protein! >= 10 ? 0 : 1,
-                            );
-                          }
-                          if (option.fat != null) {
-                            fatsCtrl.text = option.fat!.toStringAsFixed(
-                              option.fat! >= 10 ? 0 : 1,
-                            );
-                          }
-                          if (option.carbs != null) {
-                            carbsCtrl.text = option.carbs!.toStringAsFixed(
-                              option.carbs! >= 10 ? 0 : 1,
-                            );
-                          }
-                          FocusScope.of(context).unfocus();
-                          setSheetState(() {
-                            mealSuggestions = const <SuggestionOption>[];
-                          });
-                        },
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-              AtelierFieldLabel(_isRu ? 'Калории' : 'Calories'),
-              TextField(
-                controller: caloriesCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(hintText: '420'),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        AtelierFieldLabel(_isRu ? 'Белки' : 'Protein'),
-                        TextField(
-                          controller: proteinsCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(hintText: '18'),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        AtelierFieldLabel(_isRu ? 'Жиры' : 'Fats'),
-                        TextField(
-                          controller: fatsCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(hintText: '12'),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        AtelierFieldLabel(_isRu ? 'Углеводы' : 'Carbs'),
-                        TextField(
-                          controller: carbsCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(hintText: '48'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              AtelierSurfaceCard(
-                radius: 22,
-                padding: const EdgeInsets.all(14),
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(_isRu ? 'Время приема пищи' : 'Eaten at'),
-                  subtitle: Text(_formatDateTime(eatenAt.toIso8601String())),
-                  trailing: const Icon(Icons.schedule_rounded),
-                  onTap: () async {
-                    final date = await showDatePicker(
-                      context: context,
-                      initialDate: eatenAt,
-                      firstDate: DateTime(2020),
-                      lastDate: DateTime.now().add(const Duration(days: 365)),
-                    );
-                    if (date == null || !context.mounted) return;
-                    final time = await showTimePicker(
-                      context: context,
-                      initialTime: TimeOfDay.fromDateTime(eatenAt),
-                    );
-                    if (time == null) return;
-                    setSheetState(() {
-                      eatenAt = DateTime(
-                        date.year,
-                        date.month,
-                        date.day,
-                        time.hour,
-                        time.minute,
-                      );
-                    });
-                  },
-                ),
-              ),
-              const SizedBox(height: 14),
-              AtelierFieldLabel(_isRu ? 'Заметки' : 'Notes'),
-              TextField(
-                controller: notesCtrl,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  hintText: _isRu
-                      ? 'Состав, настроение, комментарии'
-                      : 'Ingredients, context, or notes',
-                ),
-              ),
-              const SizedBox(height: 18),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: () async {
-                    if (titleCtrl.text.trim().isEmpty ||
-                        caloriesCtrl.text.trim().isEmpty) {
-                      return;
-                    }
-                    final created = await repository.createMeal({
-                      'title': titleCtrl.text.trim(),
-                      'calories': int.tryParse(caloriesCtrl.text.trim()) ?? 0,
-                      'proteins': double.tryParse(
-                        proteinsCtrl.text.trim().replaceAll(',', '.'),
-                      ),
-                      'fats': double.tryParse(
-                        fatsCtrl.text.trim().replaceAll(',', '.'),
-                      ),
-                      'carbohydrates': double.tryParse(
-                        carbsCtrl.text.trim().replaceAll(',', '.'),
-                      ),
-                      'eatenAt': eatenAt.toIso8601String(),
-                      'source': 'MANUAL',
-                      'notes': notesCtrl.text.trim().isEmpty
-                          ? null
-                          : notesCtrl.text.trim(),
-                    });
-                    if (!context.mounted) return;
-                    Navigator.of(context).pop(created != null);
-                  },
-                  child: Text(_isRu ? 'Сохранить запись' : 'Save entry'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-
     if (created == true) {
       await _load();
     }
+  }
+
+  Future<MealComposerMode?> _showAddMealOptions() async {
+    final isRu = Localizations.localeOf(context).languageCode == 'ru';
+    return showModalBottomSheet<MealComposerMode>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => AtelierSheetFrame(
+        title: isRu ? 'Добавить прием пищи' : 'Add meal',
+        subtitle: isRu
+            ? 'Выбери способ: вручную или найти в базе продуктов.'
+            : 'Choose: manual entry or search in product database.',
+        onClose: () => Navigator.of(context).pop(),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AtelierSurfaceCard(
+              radius: 24,
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                leading: const Icon(Icons.edit_note_rounded),
+                title: Text(isRu ? 'Добавить вручную' : 'Add manually'),
+                subtitle: Text(
+                  isRu
+                      ? 'Заполни данные о блюде самостоятельно.'
+                      : 'Fill in the meal details yourself.',
+                ),
+                onTap: () {
+                  Navigator.of(context).pop(MealComposerMode.manual);
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            AtelierSurfaceCard(
+              radius: 24,
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                leading: const Icon(Icons.search_rounded),
+                title: Text(
+                  isRu ? 'Найти в базе продуктов' : 'Search product database',
+                ),
+                subtitle: Text(
+                  isRu
+                      ? 'Поиск среди тысяч продуктов.'
+                      : 'Search among thousands of products.',
+                ),
+                onTap: () {
+                  Navigator.of(context).pop(MealComposerMode.product);
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openMealComposer({Map<String, dynamic>? initialMeal}) async {
+    final created = await showMealComposerSheet(
+      context: context,
+      repository: repository,
+      mealItems: _items,
+      initialMeal: initialMeal,
+    );
+    if (created == true) {
+      await _load();
+    }
+  }
+
+  Future<void> _editMeal(Map<String, dynamic> item) async {
+    final id = item['id']?.toString().trim() ?? '';
+    if (id.isEmpty) return;
+    final fullMeal = await repository.getMealById(id);
+    if (!mounted || fullMeal == null) return;
+    await _openMealComposer(initialMeal: fullMeal);
   }
 
   Future<void> _deleteMeal(Map<String, dynamic> item) async {
@@ -377,7 +304,19 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
     final imageUrl = item['imageUrl']?.toString().trim() ?? '';
     final source = item['source']?.toString() ?? 'MANUAL';
     final sourceColor = _sourceColor(source);
+    final amountEaten = item['amountEaten']?.toString().trim() ?? '';
     final notes = item['notes']?.toString().trim() ?? '';
+    final eatenCalories = _toDouble(item['calories']);
+    final fullPortionCalories = _toDouble(item['fullPortionCalories']);
+    final portionBreakdown = _portionBreakdownLabel(item);
+    final totalWeight = _toDouble(item['totalWeightGrams']);
+    final usesPerHundredBaseline =
+        totalWeight != null && (totalWeight - 100).abs() < 0.01;
+    final showPortionSplit =
+        fullPortionCalories != null &&
+        eatenCalories != null &&
+        (fullPortionCalories.round() != eatenCalories.round() ||
+            portionBreakdown != null);
 
     return AtelierSurfaceCard(
       radius: 24,
@@ -436,6 +375,12 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
                       foreground: sourceColor,
                       label: _sourceLabel(source),
                     ),
+                    if (amountEaten.isNotEmpty)
+                      AtelierTagChip(
+                        icon: Icons.restaurant_rounded,
+                        foreground: _cs.secondary,
+                        label: amountEaten,
+                      ),
                   ],
                 ),
                 const SizedBox(height: 10),
@@ -446,6 +391,92 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                if (showPortionSplit) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _cs.surfaceContainerHighest.withValues(
+                        alpha: 0.42,
+                      ),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: _cs.outlineVariant.withValues(alpha: 0.35),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                usesPerHundredBaseline
+                                    ? (_isRu ? 'На 100 г' : 'Per 100 g')
+                                    : (_isRu
+                                          ? 'Полная порция'
+                                          : 'Full portion'),
+                                style: TextStyle(
+                                  color: _cs.onSurfaceVariant,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${_formatCompactNumber(fullPortionCalories)} ${_isRu ? 'ккал' : 'kcal'}',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          width: 1,
+                          height: 34,
+                          color: _cs.outlineVariant.withValues(alpha: 0.45),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _isRu ? 'Съедено' : 'Eaten',
+                                style: TextStyle(
+                                  color: _cs.onSurfaceVariant,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${_formatCompactNumber(eatenCalories)} ${_isRu ? 'ккал' : 'kcal'}',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              if (portionBreakdown != null) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  portionBreakdown,
+                                  style: TextStyle(
+                                    color: _cs.onSurfaceVariant,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 if (notes.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Text(
@@ -462,21 +493,38 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
               ],
             ),
           ),
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: _cs.error.withValues(alpha: 0.1),
-              shape: BoxShape.circle,
-            ),
-            child: IconButton(
-              onPressed: () => _deleteMeal(item),
-              icon: Icon(
-                Icons.delete_outline_rounded,
-                size: 18,
-                color: _cs.error,
+          Column(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: _cs.primary.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: IconButton(
+                  onPressed: () => _editMeal(item),
+                  icon: Icon(Icons.edit_outlined, size: 18, color: _cs.primary),
+                ),
               ),
-            ),
+              const SizedBox(height: 10),
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: _cs.error.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: IconButton(
+                  onPressed: () => _deleteMeal(item),
+                  icon: Icon(
+                    Icons.delete_outline_rounded,
+                    size: 18,
+                    color: _cs.error,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -495,7 +543,7 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
       backgroundColor: _theme.scaffoldBackgroundColor,
       appBar: AppTopBar(
         title: _isRu ? 'История приемов пищи' : 'Meal history',
-        actions: [AppTopAction(icon: Icons.refresh_rounded, onPressed: _load)],
+        actions: const [],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _addMeal,
@@ -507,18 +555,10 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
           children: [
-            AtelierHeroCard(
-              eyebrow: 'The Organic Atelier',
-              title: _isRu ? 'История\nприемов пищи' : 'Meal\nhistory',
-              subtitle: _isRu
-                  ? 'Смотри, что ты уже сохранял, и держи питание в одном ритме.'
-                  : 'See what you have already logged and keep nutrition in one flow.',
-              gradientColors: [
-                _cs.primary.withValues(alpha: 0.14),
-                AppTheme.atelierLime.withValues(alpha: 0.18),
-                _cs.secondary.withValues(alpha: 0.1),
-              ],
-              pills: [
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
                 AtelierStatPill(
                   icon: Icons.restaurant_rounded,
                   label: _isRu ? '$mealsCount записей' : '$mealsCount entries',
@@ -531,75 +571,84 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 28),
-            AtelierSectionIntro(
-              eyebrow: _isRu ? 'фильтры' : 'filters',
-              title: _isRu ? 'Период' : 'Date range',
-              subtitle: _isRu
-                  ? 'Отфильтруй историю по времени, если хочешь посмотреть конкретный период.'
-                  : 'Filter the log by time if you want to focus on a specific period.',
-            ),
             const SizedBox(height: 16),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                FilterChip(
-                  showCheckmark: false,
-                  selected: _dateFrom != null,
-                  selectedColor: _cs.primary.withValues(alpha: 0.14),
-                  side: BorderSide(
-                    color:
-                        (_dateFrom != null ? _cs.primary : _cs.outlineVariant)
-                            .withValues(alpha: 0.45),
-                  ),
-                  label: Text(
-                    _dateFrom == null
-                        ? (_isRu ? 'Дата с' : 'From')
-                        : _formatDateTime(
-                            _dateFrom!.toIso8601String(),
-                          ).split(' ').first,
-                  ),
-                  onSelected: (_) => _pickDate(true),
-                ),
-                FilterChip(
-                  showCheckmark: false,
-                  selected: _dateTo != null,
-                  selectedColor: _cs.secondary.withValues(alpha: 0.14),
-                  side: BorderSide(
-                    color:
-                        (_dateTo != null ? _cs.secondary : _cs.outlineVariant)
-                            .withValues(alpha: 0.45),
-                  ),
-                  label: Text(
-                    _dateTo == null
-                        ? (_isRu ? 'Дата по' : 'To')
-                        : _formatDateTime(
-                            _dateTo!.toIso8601String(),
-                          ).split(' ').first,
-                  ),
-                  onSelected: (_) => _pickDate(false),
-                ),
-                if (_dateFrom != null || _dateTo != null)
-                  ActionChip(
-                    backgroundColor: _cs.tertiary.withValues(alpha: 0.1),
-                    side: BorderSide(
-                      color: _cs.tertiary.withValues(alpha: 0.35),
+            AtelierSurfaceCard(
+              radius: 24,
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _isRu ? 'Период' : 'Date range',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
                     ),
-                    label: Text(_isRu ? 'Сбросить' : 'Reset'),
-                    onPressed: _clearFilters,
                   ),
-              ],
+                  const SizedBox(height: 8),
+                  Text(
+                    _periodLabel(),
+                    style: TextStyle(
+                      color: _cs.onSurfaceVariant,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      FilterChip(
+                        showCheckmark: false,
+                        selected: _dateFrom != null,
+                        selectedColor: _cs.primary.withValues(alpha: 0.14),
+                        side: BorderSide(
+                          color:
+                              (_dateFrom != null
+                                      ? _cs.primary
+                                      : _cs.outlineVariant)
+                                  .withValues(alpha: 0.45),
+                        ),
+                        label: Text(
+                          _dateFrom == null
+                              ? (_isRu ? 'Дата с' : 'From')
+                              : _formatDateOnly(_dateFrom!),
+                        ),
+                        onSelected: (_) => _pickDate(true),
+                      ),
+                      FilterChip(
+                        showCheckmark: false,
+                        selected: _dateTo != null,
+                        selectedColor: _cs.secondary.withValues(alpha: 0.14),
+                        side: BorderSide(
+                          color:
+                              (_dateTo != null
+                                      ? _cs.secondary
+                                      : _cs.outlineVariant)
+                                  .withValues(alpha: 0.45),
+                        ),
+                        label: Text(
+                          _dateTo == null
+                              ? (_isRu ? 'Дата по' : 'To')
+                              : _formatDateOnly(_dateTo!),
+                        ),
+                        onSelected: (_) => _pickDate(false),
+                      ),
+                      if (_dateFrom != null || _dateTo != null)
+                        ActionChip(
+                          backgroundColor: _cs.tertiary.withValues(alpha: 0.1),
+                          side: BorderSide(
+                            color: _cs.tertiary.withValues(alpha: 0.35),
+                          ),
+                          label: Text(_isRu ? 'Сбросить' : 'Reset'),
+                          onPressed: _clearFilters,
+                        ),
+                    ],
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 28),
-            AtelierSectionIntro(
-              eyebrow: _isRu ? 'лог' : 'log',
-              title: _isRu ? 'Последние записи' : 'Recent entries',
-              subtitle: _isRu
-                  ? 'Каждый прием пищи сохраняется как понятная карточка, а не как сухая строка.'
-                  : 'Each meal is preserved as a readable card instead of a dry row.',
-            ),
-            const SizedBox(height: 16),
             if (_loading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 32),
@@ -610,8 +659,8 @@ class _MealHistoryScreenState extends State<MealHistoryScreen> {
                 icon: Icons.restaurant_menu_rounded,
                 title: _isRu ? 'История пока пуста' : 'History is empty',
                 subtitle: _isRu
-                    ? 'Добавь первый прием пищи вручную или сохрани результат AI-анализа.'
-                    : 'Add the first meal manually or save an AI analysis result.',
+                    ? 'Добавь первый прием пищи вручную, выбери продукт из каталога или сохрани результат AI-анализа.'
+                    : 'Add your first meal manually, choose a product from the catalog, or save an AI analysis result.',
                 accent: _cs.primary,
               )
             else

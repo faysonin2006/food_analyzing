@@ -19,6 +19,8 @@ extension ApiServiceAnalysisMethods on ApiService {
       'saved_at': data['savedAt'] ?? data['saved_at'],
       'createdAt': data['createdAt'] ?? data['created_at'],
       'errorMessage': data['errorMessage'] ?? data['error_message'],
+      'estimatedWeightGrams':
+          data['estimatedWeightGrams'] ?? data['estimated_weight_grams'],
       'foodDetected':
           data['foodDetected'] ??
           data['food_detected'] ??
@@ -32,6 +34,7 @@ extension ApiServiceAnalysisMethods on ApiService {
     XFile imageFile, {
     String extraQuestions = '',
   }) async {
+    final requestRevision = _sessionRevision;
     var token = await getToken();
     if (token == null || token.isEmpty) {
       final refreshed = await _refreshToken();
@@ -72,8 +75,8 @@ extension ApiServiceAnalysisMethods on ApiService {
         final refreshed = await _refreshToken();
         if (refreshed) {
           response = await sendOnce();
-        } else if (response.statusCode == 401) {
-          await logout();
+        } else {
+          await _logoutIfSessionUnchanged(requestRevision);
           print('Failed to refresh token before analysis start');
           return null;
         }
@@ -123,6 +126,8 @@ extension ApiServiceAnalysisMethods on ApiService {
           'saved_meal_id': data['savedMealId'] ?? data['saved_meal_id'],
           'saved_at': data['savedAt'] ?? data['saved_at'],
           'error_message': data['errorMessage'] ?? data['error_message'],
+          'estimatedWeightGrams':
+              data['estimatedWeightGrams'] ?? data['estimated_weight_grams'],
           'foodDetected':
               data['foodDetected'] ??
               data['food_detected'] ??

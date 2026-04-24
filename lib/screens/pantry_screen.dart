@@ -5,11 +5,12 @@ import 'package:image_picker/image_picker.dart';
 
 import '../core/app_feedback.dart';
 import '../core/live_refresh.dart';
-import '../core/app_theme.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
 import '../core/food_suggestions.dart';
 import '../core/suggestion_panel.dart';
+import '../features/product_search/models/product_search_context.dart';
+import '../features/product_search/screens/unified_product_search_screen.dart';
 import '../repositories/app_repository.dart';
 import '../services/api_service.dart';
 import 'barcode_scanner_screen.dart';
@@ -53,7 +54,7 @@ class _PantryScreenState extends State<PantryScreen>
     String message, {
     AppFeedbackKind? kind,
     bool preferPopup = false,
-    bool addToInbox = true,
+    bool addToInbox = false,
   }) {
     if (!mounted) return;
     showAppFeedback(
@@ -200,6 +201,8 @@ class _PantryScreenState extends State<PantryScreen>
       final items = await itemsFuture;
       final expiring = await expiringFuture;
       final expired = await expiredFuture;
+
+      ///Проверка на изменение
       final nextSignature = liveRefreshSignature(<String, Object?>{
         'items': items,
         'expiring': expiring,
@@ -299,6 +302,24 @@ class _PantryScreenState extends State<PantryScreen>
               radius: 24,
               padding: EdgeInsets.zero,
               child: ListTile(
+                leading: const Icon(Icons.search_rounded),
+                title: Text(_isRu ? 'Найти в базе продуктов' : 'Search product database'),
+                subtitle: Text(
+                  _isRu
+                      ? 'Поиск среди тысяч продуктов.'
+                      : 'Search among thousands of products.',
+                ),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  await _openProductSearchAndEditor();
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            AtelierSurfaceCard(
+              radius: 24,
+              padding: EdgeInsets.zero,
+              child: ListTile(
                 leading: const Icon(Icons.qr_code_scanner_rounded),
                 title: Text(_isRu ? 'Сканировать штрихкод' : 'Scan barcode'),
                 subtitle: Text(
@@ -316,6 +337,32 @@ class _PantryScreenState extends State<PantryScreen>
         ),
       ),
     );
+  }
+
+  Future<void> _openProductSearchAndEditor() async {
+    final selected = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (_) => UnifiedProductSearchScreen(
+          context: ProductSearchContext.pantry,
+          initialQuery: '',
+          onProductSelected: (product) {
+            // Product will be returned via Navigator.pop
+          },
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    
+    // Преобразовать данные продукта в формат для кладовой
+    final prefill = <String, dynamic>{
+      'name': selected['productName']?.toString().trim() ?? '',
+      'brand': selected['brandName']?.toString().trim() ?? '',
+      'category': 'Other', // Можно добавить логику определения категории
+      'imageUrl': selected['imageUrl']?.toString().trim() ?? '',
+      'barcode': selected['barcode']?.toString().trim() ?? '',
+    };
+    
+    await _openEditor(prefill: prefill);
   }
 
   Future<void> _scanBarcodeAndOpenEditor() async {
@@ -736,7 +783,6 @@ class _PantryScreenState extends State<PantryScreen>
       appBar: AppTopBar(
         title: _screenTitle,
         actions: [
-          AppTopAction(icon: Icons.refresh_rounded, onPressed: _load),
           AppTopAction(
             icon: Icons.qr_code_scanner_rounded,
             onPressed: _scanBarcodeAndOpenEditor,
@@ -753,18 +799,10 @@ class _PantryScreenState extends State<PantryScreen>
         child: ListView(
           padding: const EdgeInsets.fromLTRB(24, 16, 24, 120),
           children: [
-            AtelierHeroCard(
-              eyebrow: 'The Organic Atelier',
-              title: _isRu ? 'Домашняя\nкладовая' : 'Home\npantry',
-              subtitle: _isRu
-                  ? 'Следи за остатками, сроками и быстро веди продуктовый контур.'
-                  : 'Track quantities, expiry dates, and keep your food flow organized.',
-              gradientColors: [
-                _cs.primary.withValues(alpha: 0.16),
-                AppTheme.atelierLime.withValues(alpha: 0.18),
-                _cs.tertiary.withValues(alpha: 0.08),
-              ],
-              pills: [
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
                 AtelierStatPill(
                   icon: Icons.inventory_2_rounded,
                   label: _isRu
@@ -788,15 +826,7 @@ class _PantryScreenState extends State<PantryScreen>
                 ),
               ],
             ),
-            const SizedBox(height: 28),
-            AtelierSectionIntro(
-              eyebrow: _isRu ? 'режимы' : 'modes',
-              title: _isRu ? 'Фильтр кладовой' : 'Pantry view',
-              subtitle: _isRu
-                  ? 'Переключайся между всеми товарами, истекающими и просроченными.'
-                  : 'Switch between all items, expiring products, and expired ones.',
-            ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 18),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -813,7 +843,7 @@ class _PantryScreenState extends State<PantryScreen>
                 }).toList(),
               ),
             ),
-            const SizedBox(height: 28),
+            const SizedBox(height: 20),
             AtelierSectionIntro(
               eyebrow: _isRu ? 'запасы' : 'inventory',
               title: _titleForMode(_mode),

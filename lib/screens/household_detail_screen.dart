@@ -7,6 +7,8 @@ import '../core/live_refresh.dart';
 import '../core/app_theme.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
+import '../features/product_search/models/product_search_context.dart';
+import '../features/product_search/screens/unified_product_search_screen.dart';
 import '../repositories/app_repository.dart';
 import '../services/api_service.dart';
 
@@ -54,7 +56,7 @@ class _HouseholdDetailScreenState extends State<HouseholdDetailScreen>
     String message, {
     AppFeedbackKind? kind,
     bool preferPopup = false,
-    bool addToInbox = true,
+    bool addToInbox = false,
   }) {
     if (!mounted) return;
     showAppFeedback(
@@ -274,6 +276,114 @@ class _HouseholdDetailScreenState extends State<HouseholdDetailScreen>
   }
 
   Future<void> _addShoppingItem() async {
+    // Показать выбор способа добавления
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => AtelierSheetFrame(
+        title: _isRu ? 'Добавить покупку' : 'Add shopping item',
+        subtitle: _isRu
+            ? 'Выбери способ добавления продукта в общий список покупок.'
+            : 'Choose how to add a product to the shared shopping list.',
+        onClose: () => Navigator.of(context).pop(),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AtelierSurfaceCard(
+              radius: 24,
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                leading: const Icon(Icons.edit_rounded),
+                title: Text(_isRu ? 'Добавить вручную' : 'Add manually'),
+                subtitle: Text(
+                  _isRu
+                      ? 'Введи название и количество самостоятельно.'
+                      : 'Enter name and quantity yourself.',
+                ),
+                onTap: () => Navigator.of(context).pop('manual'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            AtelierSurfaceCard(
+              radius: 24,
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                leading: const Icon(Icons.search_rounded),
+                title: Text(_isRu ? 'Найти в базе продуктов' : 'Search product database'),
+                subtitle: Text(
+                  _isRu
+                      ? 'Поиск среди тысяч продуктов.'
+                      : 'Search among thousands of products.',
+                ),
+                onTap: () => Navigator.of(context).pop('search'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || choice == null) return;
+
+    if (choice == 'search') {
+      await _addShoppingItemFromProductSearch();
+    } else {
+      await _addShoppingItemManually();
+    }
+  }
+
+  Future<void> _addShoppingItemFromProductSearch() async {
+    final selected = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (_) => UnifiedProductSearchScreen(
+          context: ProductSearchContext.family,
+          initialQuery: '',
+          onProductSelected: (product) {
+            // Product will be returned via Navigator.pop
+          },
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+
+    // Создать элемент списка покупок из выбранного продукта
+    final name = selected['productName']?.toString().trim() ?? '';
+    if (name.isEmpty) return;
+
+    try {
+      final result = await repository.createHouseholdShoppingItem(
+        widget.householdId,
+        {
+          'name': name,
+          'quantity': 1.0,
+          'unit': null,
+          'note': null,
+        },
+      );
+      if (!mounted) return;
+      if (result != null) {
+        await _load();
+      }
+    } catch (error) {
+      if (!mounted) return;
+      showAppFeedback(
+        context,
+        _errorText(
+          error,
+          _isRu
+              ? 'Не удалось добавить покупку'
+              : 'Failed to add shopping item',
+        ),
+        kind: AppFeedbackKind.error,
+        source: _screenTitle,
+        preferPopup: true,
+      );
+    }
+  }
+
+  Future<void> _addShoppingItemManually() async {
     final nameCtrl = TextEditingController();
     final quantityCtrl = TextEditingController(text: '1');
     final unitCtrl = TextEditingController();
@@ -534,7 +644,6 @@ class _HouseholdDetailScreenState extends State<HouseholdDetailScreen>
       appBar: AppTopBar(
         title: householdName,
         actions: [
-          AppTopAction(icon: Icons.refresh_rounded, onPressed: _load),
           AppTopAction(
             icon: Icons.person_add_alt_1_rounded,
             onPressed: _inviteMember,

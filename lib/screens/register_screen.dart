@@ -258,13 +258,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   ),
                                 ),
                                 const SizedBox(height: 10),
-                                Text(
-                                  _isRu
-                                      ? 'Новый доступ к вашему\nпрофилю atelier.'
-                                      : 'A new key to your\natelier profile.',
-                                  style: theme.textTheme.headlineSmall
-                                      ?.copyWith(height: 0.98),
-                                ),
+                                // Text(
+                                //   _isRu
+                                //       ? 'Новый доступ к вашему\nпрофилю atelier.'
+                                //       : 'A new key to your\natelier profile.',
+                                //   style: theme.textTheme.headlineSmall
+                                //       ?.copyWith(height: 0.98),
+                                // ),
                                 const SizedBox(height: 22),
                                 AtelierFieldLabel(
                                   _isRu ? 'Email' : 'Email address',

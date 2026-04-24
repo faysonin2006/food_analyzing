@@ -133,6 +133,7 @@ class Tr {
       'protein': 'Белки',
       'fats': 'Жиры',
       'carbs': 'Углеводы',
+      'nutritionist_insights': 'Рекомендации нутрициолога',
 
       'edit_profile_title': 'Редактировать профиль',
       'name': 'Имя',
@@ -303,6 +304,7 @@ class Tr {
       'protein': 'Protein',
       'fats': 'Fats',
       'carbs': 'Carbs',
+      'nutritionist_insights': 'Nutritionist Insights',
 
       'edit_profile_title': 'Edit profile',
       'name': 'Name',

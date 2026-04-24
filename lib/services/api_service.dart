@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
@@ -67,12 +69,15 @@ class _RecipePageMeta {
 }
 
 class ApiService {
-  static const String baseUrl =
-      'http://192.168.10'
-      '.92:8090';
   // static const String baseUrl =
-  //     'http://172.20.10'
-  //     '.7:8090';
+  //     'http://192.168.10'
+  //     '.92:8090';
+  static const String baseUrl =
+      'http://172.20.10'
+      '.7:8090';
+  // static const String baseUrl =
+  //     'http://192.168.31'
+  //     '.91:8090';
 
   final _storage = const FlutterSecureStorage();
 
@@ -95,6 +100,25 @@ class ApiService {
   Map<String, dynamic>? _profileMemoryCache;
   DateTime? _profileMemoryCacheAt;
   Future<Map<String, dynamic>?>? _inFlightProfileRequest;
+  final ValueNotifier<int> _authSignal = ValueNotifier<int>(0);
+  final ValueNotifier<int> _mealSignal = ValueNotifier<int>(0);
+  Map<String, dynamic>? _lastMealSignalPayload;
+  int _sessionRevision = 0;
+
+  ValueListenable<int> get authSignal => _authSignal;
+  ValueListenable<int> get mealSignal => _mealSignal;
+  Map<String, dynamic>? get lastMealSignalPayload => _lastMealSignalPayload;
+
+  void _emitAuthSignal() {
+    _authSignal.value++;
+  }
+
+  void _emitMealSignal([Map<String, dynamic>? payload]) {
+    _lastMealSignalPayload = payload == null
+        ? null
+        : Map<String, dynamic>.from(payload);
+    _mealSignal.value++;
+  }
 
   String _cacheHash(String value) {
     var hash = 0x811C9DC5;
@@ -222,6 +246,8 @@ class ApiService {
     if (refresh != null && refresh.isNotEmpty) {
       await _storage.write(key: _kRefreshKey, value: refresh);
     }
+    _sessionRevision++;
+    _emitAuthSignal();
     print('Tokens saved');
   }
 
@@ -229,13 +255,56 @@ class ApiService {
 
   Future<String?> _getRefreshToken() async => _storage.read(key: _kRefreshKey);
 
+  Future<void> _clearAuthScopedCaches() async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = <String>[
+      _kCacheProfileMe,
+      '$_kCacheProfileMe$_kCacheTsSuffix',
+      _kCacheLikes,
+      '$_kCacheLikes$_kCacheTsSuffix',
+      _kCacheHistory,
+      '$_kCacheHistory$_kCacheTsSuffix',
+    ];
+    for (final key in keys) {
+      await prefs.remove(key);
+    }
+  }
+
+  Future<void> _logoutIfSessionUnchanged(int requestRevision) async {
+    if (requestRevision != _sessionRevision) return;
+    await logout();
+  }
+
   Future<void> logout() async {
     await _storage.delete(key: _kAccessKey);
     await _storage.delete(key: _kRefreshKey);
+    await _clearAuthScopedCaches();
     _profileMemoryCache = null;
     _profileMemoryCacheAt = null;
     _inFlightProfileRequest = null;
+    _sessionRevision++;
+    _emitAuthSignal();
     print('Logout completed');
+  }
+
+  Future<bool> hasActiveSession() async {
+    final access = await getToken();
+    final refresh = await _getRefreshToken();
+    final hasAccess = access != null && access.isNotEmpty;
+    final hasRefresh = refresh != null && refresh.isNotEmpty;
+    if (!hasAccess && !hasRefresh) return false;
+    if (!NetworkMonitor.instance.isOnline) return true;
+
+    final profile = await getProfile(
+      preferCache: false,
+      allowCachedFallback: false,
+    );
+    if (profile != null) return true;
+
+    final accessAfterCheck = await getToken();
+    final refreshAfterCheck = await _getRefreshToken();
+    return (accessAfterCheck != null && accessAfterCheck.isNotEmpty) ||
+        (refreshAfterCheck != null && refreshAfterCheck.isNotEmpty);
   }
 
   Map<String, dynamic> _extractAuthMap(dynamic decoded) {
@@ -325,6 +394,8 @@ class ApiService {
   }
 
   Future<http.Response> _getWithAuth(Uri url) async {
+    final requestRevision = _sessionRevision;
+
     Future<http.Response> doGet() async =>
         http.get(url, headers: await _getHeaders());
 
@@ -333,8 +404,8 @@ class ApiService {
       final ok = await _refreshToken();
       if (ok) {
         response = await doGet();
-      } else if (response.statusCode == 401) {
-        await logout();
+      } else {
+        await _logoutIfSessionUnchanged(requestRevision);
         throw Exception('Failed to refresh token');
       }
     }
@@ -342,6 +413,8 @@ class ApiService {
   }
 
   Future<http.Response> _putWithAuth(Uri url, {Object? body}) async {
+    final requestRevision = _sessionRevision;
+
     Future<http.Response> doPut() async =>
         http.put(url, headers: await _getHeaders(), body: body);
 
@@ -350,8 +423,8 @@ class ApiService {
       final ok = await _refreshToken();
       if (ok) {
         response = await doPut();
-      } else if (response.statusCode == 401) {
-        await logout();
+      } else {
+        await _logoutIfSessionUnchanged(requestRevision);
         throw Exception('Failed to refresh token');
       }
     }
@@ -359,6 +432,8 @@ class ApiService {
   }
 
   Future<http.Response> _postWithAuth(Uri url, {Object? body}) async {
+    final requestRevision = _sessionRevision;
+
     Future<http.Response> doPost() async =>
         http.post(url, headers: await _getHeaders(), body: body);
 
@@ -367,8 +442,8 @@ class ApiService {
       final ok = await _refreshToken();
       if (ok) {
         response = await doPost();
-      } else if (response.statusCode == 401) {
-        await logout();
+      } else {
+        await _logoutIfSessionUnchanged(requestRevision);
         throw Exception('Failed to refresh token');
       }
     }
@@ -376,6 +451,8 @@ class ApiService {
   }
 
   Future<http.Response> _patchWithAuth(Uri url, {Object? body}) async {
+    final requestRevision = _sessionRevision;
+
     Future<http.Response> doPatch() async =>
         http.patch(url, headers: await _getHeaders(), body: body);
 
@@ -384,8 +461,8 @@ class ApiService {
       final ok = await _refreshToken();
       if (ok) {
         response = await doPatch();
-      } else if (response.statusCode == 401) {
-        await logout();
+      } else {
+        await _logoutIfSessionUnchanged(requestRevision);
         throw Exception('Failed to refresh token');
       }
     }
@@ -393,6 +470,8 @@ class ApiService {
   }
 
   Future<http.Response> _deleteWithAuth(Uri url) async {
+    final requestRevision = _sessionRevision;
+
     Future<http.Response> doDelete() async =>
         http.delete(url, headers: await _getHeaders());
 
@@ -401,8 +480,8 @@ class ApiService {
       final ok = await _refreshToken();
       if (ok) {
         response = await doDelete();
-      } else if (response.statusCode == 401) {
-        await logout();
+      } else {
+        await _logoutIfSessionUnchanged(requestRevision);
         throw Exception('Failed to refresh token');
       }
     }

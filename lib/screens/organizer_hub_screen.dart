@@ -6,27 +6,32 @@ import '../core/app_feedback.dart';
 import '../core/atelier_ui.dart';
 import '../core/app_top_bar.dart';
 import '../core/settings_sheet.dart';
-import '../core/food_suggestions.dart';
-import '../core/suggestion_panel.dart';
+import '../core/live_refresh.dart';
 import '../repositories/app_repository.dart';
 import '../services/api_service.dart';
-import 'analytics_screen.dart';
 import 'household_screen.dart';
 import 'meal_history_screen.dart';
+import 'meals/meal_composer_sheet.dart';
 import 'pantry_screen.dart';
 import 'shopping_list_screen.dart';
 
 class OrganizerHubScreen extends StatefulWidget {
-  const OrganizerHubScreen({super.key});
+  const OrganizerHubScreen({super.key, this.isActive = false});
+
+  final bool isActive;
 
   @override
   State<OrganizerHubScreen> createState() => _OrganizerHubScreenState();
 }
 
-class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
+class _OrganizerHubScreenState extends State<OrganizerHubScreen>
+    with LiveRefreshState<OrganizerHubScreen> {
   final AppRepository repository = AppRepository.instance;
 
   bool _didScheduleInitialLoad = false;
+  bool _pendingMealRefresh = false;
+  DateTime? _lastAutoRefreshAt;
+  String? _loadedDayKey;
   Map<String, dynamic>? _dailyAnalytics;
   Map<String, dynamic>? _profile;
   List<Map<String, dynamic>> _expiringPantry = const [];
@@ -45,6 +50,31 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
           _cs.surface,
         )
       : const Color(0xFFF6F6F7);
+
+  String _todayKey() {
+    final now = DateTime.now();
+    final month = now.month.toString().padLeft(2, '0');
+    final day = now.day.toString().padLeft(2, '0');
+    return '${now.year}-$month-$day';
+  }
+
+  bool get _routeIsCurrent {
+    final route = ModalRoute.of(context);
+    return route?.isCurrent ?? true;
+  }
+
+  @override
+  Duration get liveRefreshInterval => const Duration(minutes: 1);
+
+  @override
+  bool get enableLiveRefresh => widget.isActive && _routeIsCurrent;
+
+  @override
+  Future<void> performLiveRefresh() async {
+    if (_loadedDayKey != _todayKey()) {
+      await _load();
+    }
+  }
 
   String _errorText(Object error, String fallback) {
     if (error is ApiException) return error.message;
@@ -71,7 +101,7 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
     String message, {
     AppFeedbackKind? kind,
     bool preferPopup = false,
-    bool addToInbox = true,
+    bool addToInbox = false,
   }) {
     if (!mounted) return;
     showAppFeedback(
@@ -94,6 +124,112 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    repository.mealSignal.addListener(_handleMealSignal);
+  }
+
+  @override
+  void dispose() {
+    repository.mealSignal.removeListener(_handleMealSignal);
+    super.dispose();
+  }
+
+  void _handleMealSignal() {
+    _pendingMealRefresh = true;
+    final payload = repository.latestMealSignalPayload;
+    if (_loadedDayKey != null && _loadedDayKey != _todayKey()) {
+      _pendingMealRefresh = false;
+      _lastAutoRefreshAt = DateTime.now();
+      if (mounted && widget.isActive) {
+        _load();
+      }
+      return;
+    }
+    if (payload != null) {
+      _applyMealSignalPayload(payload);
+    }
+    if (!mounted || !widget.isActive) return;
+    _pendingMealRefresh = false;
+    _lastAutoRefreshAt = DateTime.now();
+    if (payload == null) {
+      _load();
+      return;
+    }
+    Future<void>.delayed(const Duration(milliseconds: 450), () {
+      if (!mounted || !widget.isActive) return;
+      _load();
+    });
+  }
+
+  DateTime? _parseSignalDate(dynamic raw) {
+    final parsed = DateTime.tryParse(raw?.toString() ?? '');
+    return parsed?.toLocal();
+  }
+
+  double _signalDouble(Map<String, dynamic> payload, List<String> keys) {
+    for (final key in keys) {
+      final value = payload[key];
+      if (value is num) return value.toDouble();
+      final parsed = double.tryParse(
+        value?.toString().trim().replaceAll(',', '.') ?? '',
+      );
+      if (parsed != null) return parsed;
+    }
+    return 0;
+  }
+
+  int _signalInt(Map<String, dynamic> payload, List<String> keys) {
+    for (final key in keys) {
+      final value = payload[key];
+      if (value is int) return value;
+      if (value is num) return value.round();
+      final parsed = int.tryParse(value?.toString().trim() ?? '');
+      if (parsed != null) return parsed;
+    }
+    return 0;
+  }
+
+  void _applyMealSignalPayload(Map<String, dynamic> payload) {
+    if (_dailyAnalytics == null) return;
+    final eatenAt = _parseSignalDate(
+      payload['eatenAt'] ?? payload['createdAt'] ?? payload['created_at'],
+    );
+    final now = DateTime.now();
+    if (eatenAt == null ||
+        eatenAt.year != now.year ||
+        eatenAt.month != now.month ||
+        eatenAt.day != now.day) {
+      return;
+    }
+
+    final calories = _signalInt(payload, ['calories']);
+    final proteins = _signalDouble(payload, ['proteins', 'protein']);
+    final fats = _signalDouble(payload, ['fats', 'fat']);
+    final carbs = _signalDouble(payload, ['carbohydrates', 'carbs', 'carb']);
+
+    setState(() {
+      final next = Map<String, dynamic>.from(_dailyAnalytics!);
+      next['totalCalories'] = _readInt(next['totalCalories']) + calories;
+      next['mealsCount'] = _readInt(next['mealsCount']) + 1;
+      next['proteins'] =
+          _readDouble(next['proteins'] ?? next['totalProteins'], 0) + proteins;
+      next['totalProteins'] =
+          _readDouble(next['totalProteins'] ?? next['proteins'], 0) + proteins;
+      next['fats'] = _readDouble(next['fats'] ?? next['totalFats'], 0) + fats;
+      next['totalFats'] =
+          _readDouble(next['totalFats'] ?? next['fats'], 0) + fats;
+      next['carbohydrates'] =
+          _readDouble(next['carbohydrates'] ?? next['totalCarbohydrates'], 0) +
+          carbs;
+      next['totalCarbohydrates'] =
+          _readDouble(next['totalCarbohydrates'] ?? next['carbohydrates'], 0) +
+          carbs;
+      _dailyAnalytics = next;
+    });
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_didScheduleInitialLoad) return;
@@ -104,11 +240,35 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
     });
   }
 
+  @override
+  void didUpdateWidget(covariant OrganizerHubScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.isActive || oldWidget.isActive) return;
+
+    if (_loadedDayKey != null && _loadedDayKey != _todayKey()) {
+      _pendingMealRefresh = false;
+      _lastAutoRefreshAt = DateTime.now();
+      _load();
+      return;
+    }
+
+    final now = DateTime.now();
+    final canRefresh =
+        _lastAutoRefreshAt == null ||
+        now.difference(_lastAutoRefreshAt!) > const Duration(seconds: 2);
+    if (!_pendingMealRefresh && !canRefresh) return;
+
+    _pendingMealRefresh = false;
+    _lastAutoRefreshAt = now;
+    _load();
+  }
+
   Future<void> _load() async {
     final errors = <String>[];
+    final requestedDay = DateTime.now();
 
     final dailyFuture = _loadWithFallback<Map<String, dynamic>?>(
-      future: repository.getDailyAnalytics(),
+      future: repository.getDailyAnalytics(date: requestedDay),
       fallback: _dailyAnalytics,
       errors: errors,
       fallbackMessage: _isRu
@@ -156,11 +316,15 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
 
     if (!mounted) return;
     setState(() {
-      _dailyAnalytics = daily;
-      _profile = profile;
+      _dailyAnalytics = daily ?? _dailyAnalytics;
+      _profile = profile ?? _profile;
       _expiringPantry = expiring;
       _shoppingItems = shopping;
       _householdInvitations = invitations;
+      _loadedDayKey =
+          _dailyAnalytics?['date']?.toString().trim().isNotEmpty == true
+          ? _dailyAnalytics!['date'].toString().trim()
+          : _todayKey();
     });
     _showLoadWarnings(errors);
   }
@@ -175,256 +339,82 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
     _openScreen(MealHistoryScreen(openComposerOnStart: openComposer));
   }
 
-  String _formatDateTime(dynamic raw) {
-    final date = DateTime.tryParse(raw?.toString() ?? '');
-    if (date == null) return '-';
-    final y = date.year.toString().padLeft(4, '0');
-    final m = date.month.toString().padLeft(2, '0');
-    final d = date.day.toString().padLeft(2, '0');
-    final hh = date.hour.toString().padLeft(2, '0');
-    final mm = date.minute.toString().padLeft(2, '0');
-    return '$y-$m-$d $hh:$mm';
-  }
-
   Future<void> _addMealQuick() async {
-    final titleCtrl = TextEditingController();
-    final caloriesCtrl = TextEditingController();
-    final proteinsCtrl = TextEditingController();
-    final fatsCtrl = TextEditingController();
-    final carbsCtrl = TextEditingController();
-    final notesCtrl = TextEditingController();
-    var mealSuggestions = const <SuggestionOption>[];
-    DateTime eatenAt = DateTime.now();
+    final currentContext = context;
+    final mode = await _showAddMealOptions();
+    if (!mounted || !currentContext.mounted || mode == null) return;
 
-    void refreshMealSuggestions(StateSetter setSheetState) {
-      final query = titleCtrl.text;
-      final candidates = FoodSuggestions.collectMealSuggestions(isRu: _isRu);
-      final local = FoodSuggestions.rankSuggestions(
-        candidates,
-        query: query,
-        limit: 8,
+    bool? created;
+    if (mode == MealComposerMode.product) {
+      created = await showProductMealComposerFlow(
+        context: currentContext,
+        repository: repository,
       );
-      setSheetState(() => mealSuggestions = local);
+    } else {
+      created = await showMealComposerSheet(
+        context: currentContext,
+        repository: repository,
+        initialMode: mode,
+      );
     }
-
-    final created = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setSheetState) => AtelierSheetFrame(
-          title: _isRu ? 'Добавить приём пищи' : 'Add meal',
-          subtitle: _isRu
-              ? 'Сохрани съеденное сразу из органайзера, без перехода в историю.'
-              : 'Save what you ate directly from organizer without opening history.',
-          onClose: () => Navigator.of(context).pop(),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AtelierFieldLabel(_isRu ? 'Название' : 'Title'),
-              TextFieldTapRegion(
-                child: Column(
-                  children: [
-                    TextField(
-                      controller: titleCtrl,
-                      onTap: () => refreshMealSuggestions(setSheetState),
-                      onChanged: (_) => refreshMealSuggestions(setSheetState),
-                      onTapOutside: (_) {
-                        FocusScope.of(context).unfocus();
-                        setSheetState(() {
-                          mealSuggestions = const <SuggestionOption>[];
-                        });
-                      },
-                      decoration: InputDecoration(
-                        hintText: _isRu
-                            ? 'Например, овсянка'
-                            : 'For example, oatmeal',
-                      ),
-                    ),
-                    if (mealSuggestions.isNotEmpty)
-                      AtelierSuggestionPanel(
-                        suggestions: mealSuggestions,
-                        isRu: _isRu,
-                        onSelected: (option) {
-                          titleCtrl.text = option.primaryText;
-                          titleCtrl.selection = TextSelection.collapsed(
-                            offset: titleCtrl.text.length,
-                          );
-                          if (option.calories != null) {
-                            caloriesCtrl.text = option.calories!.toString();
-                          }
-                          if (option.protein != null) {
-                            proteinsCtrl.text = option.protein!.toStringAsFixed(
-                              option.protein! >= 10 ? 0 : 1,
-                            );
-                          }
-                          if (option.fat != null) {
-                            fatsCtrl.text = option.fat!.toStringAsFixed(
-                              option.fat! >= 10 ? 0 : 1,
-                            );
-                          }
-                          if (option.carbs != null) {
-                            carbsCtrl.text = option.carbs!.toStringAsFixed(
-                              option.carbs! >= 10 ? 0 : 1,
-                            );
-                          }
-                          FocusScope.of(context).unfocus();
-                          setSheetState(() {
-                            mealSuggestions = const <SuggestionOption>[];
-                          });
-                        },
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-              AtelierFieldLabel(_isRu ? 'Калории' : 'Calories'),
-              TextField(
-                controller: caloriesCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(hintText: '420'),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        AtelierFieldLabel(_isRu ? 'Белки' : 'Protein'),
-                        TextField(
-                          controller: proteinsCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(hintText: '18'),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        AtelierFieldLabel(_isRu ? 'Жиры' : 'Fats'),
-                        TextField(
-                          controller: fatsCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(hintText: '12'),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        AtelierFieldLabel(_isRu ? 'Углеводы' : 'Carbs'),
-                        TextField(
-                          controller: carbsCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(hintText: '48'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              AtelierSurfaceCard(
-                radius: 22,
-                padding: const EdgeInsets.all(14),
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(_isRu ? 'Время приёма пищи' : 'Eaten at'),
-                  subtitle: Text(_formatDateTime(eatenAt.toIso8601String())),
-                  trailing: const Icon(Icons.schedule_rounded),
-                  onTap: () async {
-                    final date = await showDatePicker(
-                      context: context,
-                      initialDate: eatenAt,
-                      firstDate: DateTime(2020),
-                      lastDate: DateTime.now().add(const Duration(days: 365)),
-                    );
-                    if (date == null || !context.mounted) return;
-                    final time = await showTimePicker(
-                      context: context,
-                      initialTime: TimeOfDay.fromDateTime(eatenAt),
-                    );
-                    if (time == null) return;
-                    setSheetState(() {
-                      eatenAt = DateTime(
-                        date.year,
-                        date.month,
-                        date.day,
-                        time.hour,
-                        time.minute,
-                      );
-                    });
-                  },
-                ),
-              ),
-              const SizedBox(height: 14),
-              AtelierFieldLabel(_isRu ? 'Заметки' : 'Notes'),
-              TextField(
-                controller: notesCtrl,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  hintText: _isRu
-                      ? 'Состав, настроение, комментарии'
-                      : 'Ingredients, context, or notes',
-                ),
-              ),
-              const SizedBox(height: 18),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: () async {
-                    if (titleCtrl.text.trim().isEmpty ||
-                        caloriesCtrl.text.trim().isEmpty) {
-                      return;
-                    }
-                    final meal = await repository.createMeal({
-                      'title': titleCtrl.text.trim(),
-                      'calories': int.tryParse(caloriesCtrl.text.trim()) ?? 0,
-                      'proteins': double.tryParse(
-                        proteinsCtrl.text.trim().replaceAll(',', '.'),
-                      ),
-                      'fats': double.tryParse(
-                        fatsCtrl.text.trim().replaceAll(',', '.'),
-                      ),
-                      'carbohydrates': double.tryParse(
-                        carbsCtrl.text.trim().replaceAll(',', '.'),
-                      ),
-                      'eatenAt': eatenAt.toIso8601String(),
-                      'source': 'MANUAL',
-                      'notes': notesCtrl.text.trim().isEmpty
-                          ? null
-                          : notesCtrl.text.trim(),
-                    });
-                    if (!context.mounted) return;
-                    Navigator.of(context).pop(meal != null);
-                  },
-                  child: Text(_isRu ? 'Сохранить запись' : 'Save entry'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-
     if (created == true) {
       await _load();
     }
+  }
+
+  Future<MealComposerMode?> _showAddMealOptions() async {
+    final isRu = Localizations.localeOf(context).languageCode == 'ru';
+    return showModalBottomSheet<MealComposerMode>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => AtelierSheetFrame(
+        title: isRu ? 'Добавить прием пищи' : 'Add meal',
+        subtitle: isRu
+            ? 'Выбери способ: вручную или найти в базе продуктов.'
+            : 'Choose: manual entry or search in product database.',
+        onClose: () => Navigator.of(context).pop(),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AtelierSurfaceCard(
+              radius: 24,
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                leading: const Icon(Icons.edit_note_rounded),
+                title: Text(isRu ? 'Добавить вручную' : 'Add manually'),
+                subtitle: Text(
+                  isRu
+                      ? 'Заполни данные о блюде самостоятельно.'
+                      : 'Fill in the meal details yourself.',
+                ),
+                onTap: () {
+                  Navigator.of(context).pop(MealComposerMode.manual);
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            AtelierSurfaceCard(
+              radius: 24,
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                leading: const Icon(Icons.search_rounded),
+                title: Text(
+                  isRu ? 'Найти в базе продуктов' : 'Search product database',
+                ),
+                subtitle: Text(
+                  isRu
+                      ? 'Поиск среди тысяч продуктов.'
+                      : 'Search among thousands of products.',
+                ),
+                onTap: () {
+                  Navigator.of(context).pop(MealComposerMode.product);
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   String _formatQuantityValue(dynamic raw) {
@@ -660,7 +650,6 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
   Widget _spaceCard({
     required IconData icon,
     required String title,
-    required String subtitle,
     required Color color,
     required VoidCallback onTap,
   }) {
@@ -696,19 +685,6 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 6),
-            Expanded(
-              child: Text(
-                subtitle,
-                maxLines: 4,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: _cs.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                  height: 1.24,
-                ),
-              ),
             ),
           ],
         ),
@@ -750,12 +726,166 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
     return 2200;
   }
 
+  String? _profileGoalType() {
+    final raw = (_profile?['goalType'] ?? _profile?['goal_type'])
+        ?.toString()
+        .trim();
+    if (raw == null || raw.isEmpty) return null;
+    return raw.toUpperCase();
+  }
+
+  String? _profileActivityLevel() {
+    final raw = (_profile?['activityLevel'] ?? _profile?['activity_level'])
+        ?.toString()
+        .trim();
+    if (raw == null || raw.isEmpty) return null;
+    return raw.toUpperCase();
+  }
+
+  double _round1(double value) => (value * 10).roundToDouble() / 10.0;
+
+  double _profileWeight() {
+    return _readDouble(_profile?['weight'], 0);
+  }
+
+  double _activityProteinBonus() {
+    switch (_profileActivityLevel()) {
+      case 'LIGHTLY_ACTIVE':
+        return 0.1;
+      case 'MODERATELY_ACTIVE':
+        return 0.2;
+      case 'VERY_ACTIVE':
+        return 0.3;
+      case 'EXTRA_ACTIVE':
+        return 0.35;
+      case 'SEDENTARY':
+      default:
+        return 0.0;
+    }
+  }
+
+  double _preferredProteinPerKg() {
+    final base = switch (_profileGoalType()) {
+      'LOSE_WEIGHT' => 1.9,
+      'GAIN_MUSCLE' => 1.8,
+      'MAINTAIN_WEIGHT' => 1.6,
+      _ => 1.6,
+    };
+    return base + _activityProteinBonus();
+  }
+
+  double _minimumProteinPerKg() {
+    final base = switch (_profileGoalType()) {
+      'LOSE_WEIGHT' => 1.6,
+      'GAIN_MUSCLE' => 1.6,
+      'MAINTAIN_WEIGHT' => 1.3,
+      _ => 1.3,
+    };
+    return base + _activityProteinBonus() * 0.5;
+  }
+
+  double _preferredFatPerKg() {
+    return switch (_profileGoalType()) {
+      'LOSE_WEIGHT' => 0.8,
+      'GAIN_MUSCLE' => 0.8,
+      'MAINTAIN_WEIGHT' => 0.9,
+      _ => 0.85,
+    };
+  }
+
+  double _minimumFatPerKg() {
+    return switch (_profileGoalType()) {
+      'LOSE_WEIGHT' => 0.6,
+      'GAIN_MUSCLE' => 0.6,
+      'MAINTAIN_WEIGHT' => 0.7,
+      _ => 0.65,
+    };
+  }
+
+  double _minimumCarbsPerKg() {
+    final base = switch (_profileActivityLevel()) {
+      'LIGHTLY_ACTIVE' => 2.0,
+      'MODERATELY_ACTIVE' => 2.5,
+      'VERY_ACTIVE' => 3.0,
+      'EXTRA_ACTIVE' => 3.5,
+      _ => 1.5,
+    };
+    return switch (_profileGoalType()) {
+      'LOSE_WEIGHT' => math.max(1.2, base - 0.5),
+      'GAIN_MUSCLE' => base + 0.5,
+      'MAINTAIN_WEIGHT' => base,
+      _ => base,
+    };
+  }
+
+  ({double protein, double fats, double carbs}) _fallbackMacroTargets() {
+    final targetCalories = _dailyTargetCalories();
+    final weight = _profileWeight();
+    if (targetCalories <= 0 || weight <= 0) {
+      return (protein: 0.0, fats: 0.0, carbs: 0.0);
+    }
+
+    double proteins = _round1(weight * _preferredProteinPerKg());
+    final minimumProteins = _round1(weight * _minimumProteinPerKg());
+    double fats = _round1(weight * _preferredFatPerKg());
+    final minimumFats = _round1(weight * _minimumFatPerKg());
+    final minimumCarbs = _round1(weight * _minimumCarbsPerKg());
+
+    var availableCarbCalories = targetCalories - proteins * 4.0 - fats * 9.0;
+    if (availableCarbCalories < minimumCarbs * 4.0) {
+      final adjustedFats =
+          (targetCalories - proteins * 4.0 - minimumCarbs * 4.0) / 9.0;
+      fats = _round1(math.max(minimumFats, adjustedFats));
+      availableCarbCalories = targetCalories - proteins * 4.0 - fats * 9.0;
+    }
+
+    if (availableCarbCalories < 0 && proteins > minimumProteins) {
+      final adjustedProteins = (targetCalories - fats * 9.0) / 4.0;
+      proteins = _round1(math.max(minimumProteins, adjustedProteins));
+      availableCarbCalories = targetCalories - proteins * 4.0 - fats * 9.0;
+    }
+
+    final carbs = _round1(math.max(0.0, availableCarbCalories / 4.0));
+    return (protein: proteins, fats: fats, carbs: carbs);
+  }
+
+  double? _dailyTargetMacro({
+    required String analyticsKey,
+    required double fallbackValue,
+  }) {
+    final analyticsTarget = _readDouble(
+      _dailyAnalytics?[analyticsKey] ??
+          _dailyAnalytics?[_toSnakeCase(analyticsKey)],
+      0,
+    );
+    if (analyticsTarget > 0) return analyticsTarget;
+    return fallbackValue > 0 ? fallbackValue : null;
+  }
+
+  String _toSnakeCase(String value) {
+    final buffer = StringBuffer();
+    for (var i = 0; i < value.length; i++) {
+      final char = value[i];
+      final isUpper = char.toUpperCase() == char && char.toLowerCase() != char;
+      if (isUpper && i > 0) buffer.write('_');
+      buffer.write(char.toLowerCase());
+    }
+    return buffer.toString();
+  }
+
+  String _formatMacroProgressText(double consumed, double? target) {
+    final consumedText = consumed.round().toString();
+    if (target == null || target <= 0) {
+      return '$consumedText ${_isRu ? 'г' : 'g'}';
+    }
+    final targetText = target.round().toString();
+    return '$consumedText / $targetText ${_isRu ? 'г' : 'g'}';
+  }
+
   Widget _buildOverview() {
     final dailyCalories = _readInt(_dailyAnalytics?['totalCalories']);
     final meals = _readInt(_dailyAnalytics?['mealsCount']);
     final expiring = _readInt(_dailyAnalytics?['expiringSoonCount']);
-    final shopping = _shoppingItems.length;
-    final invites = _householdInvitations.length;
     final targetCalories = _dailyTargetCalories();
     final hasTarget = targetCalories > 0;
     final isOverTarget = hasTarget && dailyCalories > targetCalories;
@@ -776,43 +906,118 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
       _dailyAnalytics?['fats'] ?? _dailyAnalytics?['totalFats'],
       0,
     );
+    final fallbackTargets = _fallbackMacroTargets();
+    final targetProtein = _dailyTargetMacro(
+      analyticsKey: 'targetProteins',
+      fallbackValue: fallbackTargets.protein,
+    );
+    final targetFats = _dailyTargetMacro(
+      analyticsKey: 'targetFats',
+      fallbackValue: fallbackTargets.fats,
+    );
+    final targetCarbs = _dailyTargetMacro(
+      analyticsKey: 'targetCarbohydrates',
+      fallbackValue: fallbackTargets.carbs,
+    );
 
     Widget macroCard({
       required String label,
-      required String value,
+      required double consumed,
+      required double? target,
       required Color accent,
     }) {
+      final progress = target == null || target <= 0
+          ? 0.0
+          : (consumed / target).clamp(0.0, 1.0);
+      final isOverTarget = target != null && target > 0 && consumed > target;
       return Expanded(
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+          constraints: const BoxConstraints(minHeight: 104),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
           decoration: BoxDecoration(
             color: accent.withValues(alpha: _isDark ? 0.18 : 0.1),
             borderRadius: BorderRadius.circular(18),
             border: Border.all(color: accent.withValues(alpha: 0.16)),
           ),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: _cs.onSurfaceVariant,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
+              Row(
+                children: [
+                  Container(
+                    width: 9,
+                    height: 9,
+                    decoration: BoxDecoration(
+                      color: isOverTarget ? _cs.error : accent,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: SizedBox(
+                      height: 16,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          label,
+                          style: TextStyle(
+                            color: _cs.onSurfaceVariant,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w800,
+                            height: 1.0,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _formatMacroProgressText(consumed, target),
+                  style: TextStyle(
+                    color: isOverTarget ? _cs.error : accent,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    height: 1.05,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(
+                  minHeight: 6,
+                  value: progress,
+                  backgroundColor: accent.withValues(alpha: 0.12),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    isOverTarget ? _cs.error : accent,
+                  ),
                 ),
               ),
               const SizedBox(height: 6),
-              Text(
-                value,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: accent,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                  height: 1,
+              SizedBox(
+                height: 14,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    target == null || target <= 0
+                        ? (_isRu ? 'без цели' : 'no target')
+                        : isOverTarget
+                        ? (_isRu ? 'выше цели' : 'over target')
+                        : (_isRu ? 'сегодня' : 'for today'),
+                    style: TextStyle(
+                      color: _cs.onSurfaceVariant,
+                      fontSize: 10.6,
+                      fontWeight: FontWeight.w700,
+                      height: 1.0,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -923,29 +1128,29 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
               ),
             ],
             const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: Row(
-                children: [
-                  macroCard(
-                    label: _isRu ? 'Углеводы' : 'Carbs',
-                    value: '${carbs.round()} ${_isRu ? 'г' : 'g'}',
-                    accent: _cs.primary,
-                  ),
-                  const SizedBox(width: 12),
-                  macroCard(
-                    label: _isRu ? 'Белки' : 'Protein',
-                    value: '${protein.round()} ${_isRu ? 'г' : 'g'}',
-                    accent: _cs.secondary,
-                  ),
-                  const SizedBox(width: 12),
-                  macroCard(
-                    label: _isRu ? 'Жиры' : 'Fats',
-                    value: '${fats.round()} ${_isRu ? 'г' : 'g'}',
-                    accent: _cs.tertiary,
-                  ),
-                ],
-              ),
+            Row(
+              children: [
+                macroCard(
+                  label: _isRu ? 'Белки' : 'Protein',
+                  consumed: protein,
+                  target: targetProtein,
+                  accent: _cs.secondary,
+                ),
+                const SizedBox(width: 8),
+                macroCard(
+                  label: _isRu ? 'Жиры' : 'Fats',
+                  consumed: fats,
+                  target: targetFats,
+                  accent: _cs.tertiary,
+                ),
+                const SizedBox(width: 8),
+                macroCard(
+                  label: _isRu ? 'Углеводы' : 'Carbs',
+                  consumed: carbs,
+                  target: targetCarbs,
+                  accent: _cs.primary,
+                ),
+              ],
             ),
             const SizedBox(height: 18),
             Row(
@@ -979,92 +1184,13 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
       );
     }
 
-    final spotlightCard = Container(
-      padding: const EdgeInsets.all(28),
-      decoration: BoxDecoration(
-        color: _cs.primary,
-        borderRadius: BorderRadius.circular(30),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.verified_rounded, color: _cs.onPrimary, size: 36),
-          const SizedBox(height: 18),
-          Text(
-            _isRu ? 'Пульс дома' : 'House Pulse',
-            style: TextStyle(
-              color: _cs.onPrimary.withValues(alpha: 0.84),
-              fontSize: 11,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1.0,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _isRu
-                ? 'Очередь на\nпополнение под контролем'
-                : 'Restock Queue\nunder control',
-            style: TextStyle(
-              color: _cs.onPrimary,
-              fontSize: 28,
-              fontWeight: FontWeight.w900,
-              height: 0.98,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            _isRu
-                ? 'Активных покупок: $shopping. Семейных обновлений: $invites. Можно перейти в аналитику или сразу в список.'
-                : 'Active shopping items: $shopping. Household updates: $invites. Jump into analytics or go straight to the list.',
-            style: TextStyle(
-              color: _cs.onPrimary.withValues(alpha: 0.82),
-              fontWeight: FontWeight.w600,
-              height: 1.35,
-            ),
-          ),
-          const SizedBox(height: 22),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _cs.primaryContainer,
-                    foregroundColor: _cs.onPrimaryContainer,
-                  ),
-                  onPressed: () => _openScreen(const AnalyticsScreen()),
-                  child: Text(_isRu ? 'Открыть аналитику' : 'View Insights'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < 920) {
-          return Column(
-            children: [heroCard(), const SizedBox(height: 18), spotlightCard],
-          );
-        }
-
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(flex: 8, child: heroCard()),
-            const SizedBox(width: 18),
-            Expanded(flex: 4, child: spotlightCard),
-          ],
-        );
-      },
-    );
+    return heroCard();
   }
 
   Widget _buildSectionIntro({
     required String eyebrow,
     required String title,
-    required String subtitle,
+    String? subtitle,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1087,15 +1213,17 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
             height: 0.98,
           ),
         ),
-        const SizedBox(height: 8),
-        Text(
-          subtitle,
-          style: TextStyle(
-            color: _cs.onSurfaceVariant.withValues(alpha: 0.9),
-            fontWeight: FontWeight.w600,
-            height: 1.3,
+        if (subtitle != null && subtitle.trim().isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            subtitle,
+            style: TextStyle(
+              color: _cs.onSurfaceVariant.withValues(alpha: 0.9),
+              fontWeight: FontWeight.w600,
+              height: 1.3,
+            ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -1398,7 +1526,6 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
               child: _spaceCard(
                 icon: icon,
                 title: label,
-                subtitle: _isRu ? 'Быстрый вход в раздел' : 'Quick access lane',
                 color: color,
                 onTap: onTap,
               ),
@@ -1426,11 +1553,6 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
             onPressed: () => showAppSettingsSheet(context),
             tooltip: _isRu ? 'Настройки' : 'Settings',
           ),
-          AppTopAction(
-            icon: Icons.refresh_rounded,
-            onPressed: _load,
-            tooltip: _isRu ? 'Обновить' : 'Refresh',
-          ),
         ],
       ),
       body: RefreshIndicator(
@@ -1443,9 +1565,6 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
             _buildSectionIntro(
               eyebrow: _isRu ? 'быстрые действия' : 'quick actions',
               title: _isRu ? 'Основные разделы' : 'Primary lanes',
-              subtitle: _isRu
-                  ? 'Открой нужную зону без лишних переходов: кладовую, покупки, анализ или семейный раздел.'
-                  : 'Jump into the right zone without friction: pantry, shopping, analyze, and household.',
             ),
             const SizedBox(height: 16),
             _buildQuickRibbon(),
@@ -1453,9 +1572,6 @@ class _OrganizerHubScreenState extends State<OrganizerHubScreen> {
             _buildSectionIntro(
               eyebrow: _isRu ? 'органайзер' : 'organizer',
               title: _isRu ? 'Сводка по дому' : 'Home Summary',
-              subtitle: _isRu
-                  ? 'Панель с тревожными продуктами и покупками без лишних блоков.'
-                  : 'A compact view of urgent pantry items and shopping.',
             ),
             const SizedBox(height: 16),
             _buildSpaces(),
@@ -1589,17 +1705,20 @@ class _OrganizerCalorieRing extends StatelessWidget {
                 ),
               ),
               SizedBox(
-                width: 118,
+                width: 132,
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(
-                      isRu ? 'Сегодня' : 'Today',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: cs.onSurfaceVariant,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        isRu ? 'Сегодня' : 'Today',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: cs.onSurfaceVariant,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -1619,18 +1738,21 @@ class _OrganizerCalorieRing extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    Text(
-                      targetCalories > 0
-                          ? (isRu
-                                ? 'из $targetCalories ккал'
-                                : 'of $targetCalories kcal')
-                          : (isRu ? 'ккал за день' : 'daily kcal'),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: cs.onSurfaceVariant,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        height: 1.2,
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        targetCalories > 0
+                            ? (isRu
+                                  ? 'из $targetCalories ккал'
+                                  : 'of $targetCalories kcal')
+                            : (isRu ? 'ккал за день' : 'daily kcal'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: cs.onSurfaceVariant,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          height: 1.2,
+                        ),
                       ),
                     ),
                   ],

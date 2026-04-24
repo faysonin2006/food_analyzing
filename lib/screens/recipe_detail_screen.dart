@@ -1,4 +1,10 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:screenshot/screenshot.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../core/app_feedback.dart';
 import '../core/app_theme.dart';
@@ -87,14 +93,13 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   final AppRepository repository = AppRepository.instance;
   final likes = LikesService.instance;
   late final Future<RecipeDetails?> future;
-  final TextEditingController _commentController = TextEditingController();
-  final FocusNode _commentFocusNode = FocusNode();
+  final ScreenshotController _shareCardController = ScreenshotController();
   final Set<int> _commentLikeBusyIds = <int>{};
   RecipeDetails? _detailsOverride;
-  RecipeComment? _replyTarget;
   bool _likeBusy = false;
   bool _addingToShopping = false;
   bool _submittingComment = false;
+  bool _shareBusy = false;
   bool _pantryMatchesReady = false;
   bool _profileRestrictionsReady = false;
   Set<String> _pantryNames = const {};
@@ -123,8 +128,6 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
   @override
   void dispose() {
     likes.removeListener(_onLikesChanged);
-    _commentController.dispose();
-    _commentFocusNode.dispose();
     super.dispose();
   }
 
@@ -166,7 +169,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     String message, {
     AppFeedbackKind? kind,
     bool preferPopup = false,
-    bool addToInbox = true,
+    bool addToInbox = false,
   }) {
     if (!mounted) return;
     showAppFeedback(
@@ -183,40 +186,40 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
     _safeSetState(() {});
   }
 
-  Future<void> _submitComment(RecipeDetails baseDetails) async {
-    final text = _commentController.text.trim();
-    if (text.isEmpty) {
+  Future<bool> _submitComment(
+    RecipeDetails baseDetails, {
+    required String text,
+    RecipeComment? replyTarget,
+  }) async {
+    final normalizedText = text.trim();
+    if (normalizedText.isEmpty) {
       _showFeedback(
         _isRu ? 'Введите комментарий' : 'Enter a comment',
         kind: AppFeedbackKind.error,
         preferPopup: true,
         addToInbox: false,
       );
-      return;
+      return false;
     }
-    if (_submittingComment) return;
+    if (_submittingComment) return false;
 
-    _safeSetState(() => _submittingComment = true);
+    _submittingComment = true;
     try {
       final comment = await repository.addRecipeComment(
         recipeId: widget.recipeId,
-        text: text,
-        parentCommentId: _replyTarget?.id,
+        text: normalizedText,
+        parentCommentId: replyTarget?.id,
       );
-      if (!mounted) return;
+      if (!mounted) return false;
       final current = _detailsOverride ?? baseDetails;
-      _commentController.clear();
-      _commentFocusNode.unfocus();
       _safeSetState(() {
         _detailsOverride = current.copyWith(
           comments: _appendCommentToTree(current.comments, comment),
         );
-        _replyTarget = null;
-        _submittingComment = false;
       });
+      return true;
     } on ApiException catch (error) {
-      if (!mounted) return;
-      _safeSetState(() => _submittingComment = false);
+      if (!mounted) return false;
       final message = error.statusCode == 401
           ? (_isRu
                 ? 'Войдите, чтобы оставить комментарий'
@@ -228,25 +231,179 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
         preferPopup: true,
         addToInbox: false,
       );
+      return false;
     } catch (_) {
-      if (!mounted) return;
-      _safeSetState(() => _submittingComment = false);
+      if (!mounted) return false;
       _showFeedback(
         _isRu ? 'Не удалось отправить комментарий' : 'Failed to post comment',
         kind: AppFeedbackKind.error,
         preferPopup: true,
         addToInbox: false,
       );
+      return false;
+    } finally {
+      _submittingComment = false;
     }
   }
 
-  void _startReply(RecipeComment comment) {
-    _safeSetState(() => _replyTarget = comment);
-    _commentFocusNode.requestFocus();
-  }
+  Future<void> _openCommentSheet(
+    RecipeDetails baseDetails, {
+    RecipeComment? replyTarget,
+  }) async {
+    final controller = TextEditingController();
+    var submitting = false;
 
-  void _cancelReply() {
-    _safeSetState(() => _replyTarget = null);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setModalState) {
+            final isReply = replyTarget != null;
+            final bottomInset = MediaQuery.viewInsetsOf(sheetContext).bottom;
+
+            Future<void> handleSubmit() async {
+              if (submitting) return;
+              setModalState(() => submitting = true);
+              final ok = await _submitComment(
+                baseDetails,
+                text: controller.text,
+                replyTarget: replyTarget,
+              );
+              if (!sheetContext.mounted) return;
+              if (ok) {
+                Navigator.of(sheetContext).pop();
+                return;
+              }
+              setModalState(() => submitting = false);
+            }
+
+            return Padding(
+              padding: EdgeInsets.fromLTRB(12, 12, 12, bottomInset + 12),
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 720),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+                      decoration: BoxDecoration(
+                        color: _sheetBackground,
+                        borderRadius: BorderRadius.circular(28),
+                        border: Border.all(color: _outlineColor),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Center(
+                            child: Container(
+                              width: 42,
+                              height: 5,
+                              decoration: BoxDecoration(
+                                color: _outlineColor,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          AtelierSheetHeader(
+                            title: isReply
+                                ? (_isRu
+                                      ? 'Ответить на комментарий'
+                                      : 'Reply to comment')
+                                : (_isRu
+                                      ? 'Оставить комментарий'
+                                      : 'Leave a comment'),
+                            subtitle: isReply
+                                ? (_isRu
+                                      ? 'Ответ для ${replyTarget.authorName}'
+                                      : 'Replying to ${replyTarget.authorName}')
+                                : (_isRu
+                                      ? 'Поделитесь впечатлением о рецепте'
+                                      : 'Share how the recipe turned out'),
+                            onClose: () => Navigator.of(sheetContext).pop(),
+                          ),
+                          const SizedBox(height: 14),
+                          TextField(
+                            controller: controller,
+                            autofocus: true,
+                            minLines: 4,
+                            maxLines: 6,
+                            textCapitalization: TextCapitalization.sentences,
+                            decoration: InputDecoration(
+                              hintText: _isRu
+                                  ? 'Напишите, как у вас получился рецепт'
+                                  : 'Write how the recipe turned out for you',
+                              filled: true,
+                              fillColor: _cardBackground,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(20),
+                                borderSide: BorderSide(color: _outlineColor),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(20),
+                                borderSide: BorderSide(color: _outlineColor),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(20),
+                                borderSide: BorderSide(
+                                  color: _RecipeDetailScreenState._accentOrange,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: submitting
+                                      ? null
+                                      : () => Navigator.of(sheetContext).pop(),
+                                  child: Text(_isRu ? 'Отмена' : 'Cancel'),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: FilledButton.icon(
+                                  onPressed: submitting ? null : handleSubmit,
+                                  icon: Icon(
+                                    submitting
+                                        ? Icons.sync_rounded
+                                        : Icons.send_rounded,
+                                  ),
+                                  label: Text(
+                                    submitting
+                                        ? (_isRu
+                                              ? 'Отправляем...'
+                                              : 'Posting...')
+                                        : (isReply
+                                              ? (_isRu ? 'Ответить' : 'Reply')
+                                              : (_isRu
+                                                    ? 'Опубликовать'
+                                                    : 'Post')),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
   }
 
   Future<void> _toggleCommentLike(
@@ -294,6 +451,82 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
         preferPopup: true,
         addToInbox: false,
       );
+    }
+  }
+
+  ///Зашейрить
+  ImageProvider _shareImageProvider(RecipeDetails details) {
+    if (_isBadImageUrl(details.image)) {
+      return AssetImage(_pickPlaceholder(details.id));
+    }
+    return NetworkImage(details.image!.trim());
+  }
+
+  String _shareFileSlug(String value) {
+    final slug = value
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9а-я]+', unicode: true), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_|_$'), '');
+    return slug.isEmpty ? 'recipe' : slug;
+  }
+
+  Future<void> _shareRecipe(RecipeDetails details) async {
+    if (_shareBusy) return;
+    _safeSetState(() => _shareBusy = true);
+
+    try {
+      final merged = _mergeWithSeed(details);
+      ImageProvider imageProvider = _shareImageProvider(merged);
+      try {
+        await precacheImage(imageProvider, context);
+      } catch (_) {
+        imageProvider = AssetImage(_pickPlaceholder(merged.id));
+        if (!mounted) return;
+        await precacheImage(imageProvider, context);
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final slug = _shareFileSlug(merged.title);
+      if (!mounted) return;
+      final Uint8List pngBytes = await _shareCardController
+          .captureFromLongWidget(
+            _shareRecipeCard(merged, imageProvider: imageProvider),
+            context: context,
+            delay: const Duration(milliseconds: 450),
+            pixelRatio: 2.6,
+            constraints: const BoxConstraints(maxWidth: 1080),
+          );
+
+      final file = File('${tempDir.path}/recipe_share_${merged.id}_$slug.png');
+      await file.writeAsBytes(pngBytes, flush: true);
+
+      if (!mounted) return;
+      final renderObject = context.findRenderObject();
+      final shareOrigin = renderObject is RenderBox
+          ? renderObject.localToGlobal(Offset.zero) & renderObject.size
+          : null;
+
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'image/png', name: '$slug.png')],
+        sharePositionOrigin: shareOrigin,
+        fileNameOverrides: ['$slug.png'],
+      );
+    } catch (_) {
+      if (!mounted) return;
+      _showFeedback(
+        _isRu
+            ? 'Не удалось подготовить карточку для шаринга'
+            : 'Failed to prepare the recipe share card',
+        kind: AppFeedbackKind.error,
+        preferPopup: true,
+        addToInbox: false,
+      );
+    } finally {
+      if (mounted) {
+        _safeSetState(() => _shareBusy = false);
+      }
     }
   }
 
@@ -792,6 +1025,7 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
 
             return AtelierSheetFrame(
               title: _isRu ? 'Выберите ингредиенты' : 'Choose ingredients',
+              onClose: () => Navigator.of(sheetContext).maybePop(),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -1246,12 +1480,24 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen> {
         if (snap.connectionState != ConnectionState.done) {
           return Scaffold(
             backgroundColor: _screenBackground,
+            appBar: AppBar(
+              backgroundColor: _screenBackground,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              leading: const BackButton(),
+            ),
             body: const Center(child: CircularProgressIndicator()),
           );
         }
         if (snap.data == null) {
           return Scaffold(
             backgroundColor: _screenBackground,
+            appBar: AppBar(
+              backgroundColor: _screenBackground,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              leading: const BackButton(),
+            ),
             body: Center(
               child: Text(
                 _isRu ? 'Не удалось загрузить рецепт' : 'Failed to load recipe',

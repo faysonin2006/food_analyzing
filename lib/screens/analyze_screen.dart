@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -17,7 +18,9 @@ import '../repositories/app_repository.dart';
 part "analyze/analyze_ui.dart";
 
 class AnalyzeScreen extends StatefulWidget {
-  const AnalyzeScreen({super.key});
+  const AnalyzeScreen({super.key, this.isActive = false});
+
+  final bool isActive;
 
   @override
   State<AnalyzeScreen> createState() => _AnalyzeScreenState();
@@ -51,6 +54,8 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     with AutomaticKeepAliveClientMixin {
   static const Color _accentOrange = AppTheme.atelierGreen;
   static const Color _accentOrangeDeep = Color(0xFF0F5418);
+  static const String _analysisBasisPer100g = 'PER_100G';
+  static const String _analysisBasisFullPortion = 'FULL_PORTION';
 
   final AppRepository repository = AppRepository.instance;
   final ImagePicker _picker = ImagePicker();
@@ -59,11 +64,12 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
   File? _selectedImage;
   bool _isAnalyzing = false;
   Map<String, dynamic>? _analysisResult;
-  String? _savedMealId;
   bool _isSavingMeal = false;
   bool _isHistoryLoading = false;
   List<Map<String, dynamic>> _analysisHistory = [];
   Set<String> _deletedHistoryIds = <String>{};
+  DateTime? _lastAutoRefreshAt;
+  String _selectedAnalysisBasis = _analysisBasisPer100g;
 
   final List<String> _selectedQuestionIds = [];
 
@@ -86,7 +92,7 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     String message, {
     AppFeedbackKind? kind,
     bool preferPopup = false,
-    bool addToInbox = true,
+    bool addToInbox = false,
   }) {
     if (!mounted) return;
     showAppFeedback(
@@ -202,11 +208,24 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
       : const Color(0xFFF6F6F7);
 
   @override
+  void didUpdateWidget(covariant AnalyzeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.isActive || oldWidget.isActive) return;
+
+    final now = DateTime.now();
+    final canRefresh =
+        _lastAutoRefreshAt == null ||
+        now.difference(_lastAutoRefreshAt!) > const Duration(seconds: 2);
+    if (!canRefresh) return;
+
+    _lastAutoRefreshAt = now;
+    _refreshAnalyzeScreen();
+  }
+
+  @override
   void initState() {
     super.initState();
-    _loadDeletedHistoryIds();
-    _loadProfile();
-    _loadCachedAnalysisHistory();
+    _bootstrapAnalyzeScreen();
   }
 
   Color _blendWithSurface(Color color, [double opacity = 0.12]) {
@@ -227,13 +246,27 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     return preset.text(useRu);
   }
 
-  List<_QuestionPreset> get _coreQuestionPresets {
-    final result = <_QuestionPreset>[];
-    for (final id in _coreQuestionIds) {
-      final preset = _questionById(id);
-      if (preset != null) result.add(preset);
+  List<_QuestionPreset> get _visibleQuestionPresets {
+    final visibleIds = <String>[];
+
+    for (final id in _selectedQuestionIds) {
+      if (!visibleIds.contains(id) && _questionById(id) != null) {
+        visibleIds.add(id);
+      }
+      if (visibleIds.length >= _maxSelectedQuestions) break;
     }
-    return result;
+
+    for (final id in _coreQuestionIds) {
+      if (visibleIds.length >= _maxSelectedQuestions) break;
+      if (!visibleIds.contains(id) && _questionById(id) != null) {
+        visibleIds.add(id);
+      }
+    }
+
+    return visibleIds
+        .map(_questionById)
+        .whereType<_QuestionPreset>()
+        .toList(growable: false);
   }
 
   List<_QuestionPreset> _filterQuestionPresets(String query) {
@@ -242,9 +275,73 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     return _questionPresets.where((item) => item.matches(q)).toList();
   }
 
+  String _normalizeAnalysisBasis(String? raw) {
+    final value = raw?.trim().toUpperCase() ?? '';
+    if (value == _analysisBasisFullPortion) {
+      return _analysisBasisFullPortion;
+    }
+    return _analysisBasisPer100g;
+  }
+
+  String _analysisBasisOf(Map<String, dynamic> item) {
+    return _normalizeAnalysisBasis(
+      item['analysisBasis']?.toString() ?? item['analysis_basis']?.toString(),
+    );
+  }
+
+  String _analysisBasisShortLabel(String basis) {
+    return basis == _analysisBasisFullPortion
+        ? (_isRu ? 'полная порция' : 'full portion')
+        : (_isRu ? 'на 100 г' : 'per 100 g');
+  }
+
+  String _analysisBasisHeadline(String basis) {
+    return basis == _analysisBasisFullPortion
+        ? (_isRu
+              ? 'Оценка полной порции • Сейчас'
+              : 'Full portion estimate • Just now')
+        : (_isRu
+              ? 'Оценка на 100 г • Сейчас'
+              : 'Estimate per 100 g • Just now');
+  }
+
+  double? _analysisEstimatedWeightGrams(Map<String, dynamic> item) {
+    final raw =
+        item['estimatedWeightGrams'] ??
+        item['estimated_weight_grams'] ??
+        item['estimatedPortionWeight'] ??
+        item['estimated_portion_weight'];
+    if (raw is num) return raw.toDouble();
+    if (raw == null) return null;
+    return double.tryParse(raw.toString());
+  }
+
+  String _analysisEstimatedWeightCaption(Map<String, dynamic> item) {
+    final grams = _analysisEstimatedWeightGrams(item);
+    if (grams == null || grams <= 0) return '';
+    final weightText = _isRu
+        ? '≈ ${_formatCompactValue(grams)} г'
+        : '~${_formatCompactValue(grams)} g';
+    return _isRu
+        ? '$weightText • вес примерный'
+        : '$weightText • approximate weight';
+  }
+
+  String _analysisBasisInstruction() {
+    return 'ANALYSIS_BASIS=$_selectedAnalysisBasis';
+  }
+
+  void _setAnalysisBasis(String basis) {
+    if (!mounted) return;
+    setState(() {
+      _selectedAnalysisBasis = _normalizeAnalysisBasis(basis);
+    });
+  }
+
   String _buildExtraQuestionsPayload() {
-    if (_selectedQuestionIds.isEmpty) return '';
-    return _selectedQuestionIds.map(_questionTextById).join('\n');
+    final lines = <String>[_analysisBasisInstruction()];
+    lines.addAll(_selectedQuestionIds.map(_questionTextById));
+    return lines.join('\n');
   }
 
   void _toggleQuestionSelection(String id, bool selected) {
@@ -373,6 +470,32 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     return double.tryParse(raw?.toString() ?? '');
   }
 
+  double? _readAnalysisMacro(Map<String, dynamic> item, String key) {
+    final raw = item[key];
+    if (raw is num) return raw.toDouble();
+    return double.tryParse(raw?.toString().trim().replaceAll(',', '.') ?? '');
+  }
+
+  String _formatAnalysisMacro(dynamic raw) {
+    final value = raw is num
+        ? raw.toDouble()
+        : double.tryParse(raw?.toString().trim().replaceAll(',', '.') ?? '');
+    if (value == null) return '-';
+    final formatted = value == value.roundToDouble()
+        ? value.toInt().toString()
+        : value.toStringAsFixed(1);
+    return _isRu ? formatted.replaceAll('.', ',') : formatted;
+  }
+
+  String _formatCompactValue(num? value) {
+    if (value == null) return '--';
+    final normalized = value.toDouble();
+    final formatted = normalized == normalized.roundToDouble()
+        ? normalized.toInt().toString()
+        : normalized.toStringAsFixed(1);
+    return _isRu ? formatted.replaceAll('.', ',') : formatted;
+  }
+
   bool? _readBool(dynamic value) {
     if (value is bool) return value;
     final text = value?.toString().trim().toLowerCase() ?? '';
@@ -387,16 +510,6 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
             ?.toString()
             .trim() ??
         '';
-  }
-
-  String? _analysisSavedMealIdOf(Map<String, dynamic> item) {
-    final raw =
-        item['savedMealId'] ??
-        item['saved_meal_id'] ??
-        item['mealEntryId'] ??
-        item['meal_entry_id'];
-    final value = raw?.toString().trim() ?? '';
-    return value.isEmpty ? null : value;
   }
 
   String _analysisExtraInfo(Map<String, dynamic> item) {
@@ -447,18 +560,10 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     return !_analysisIsFailed(item) && _historyCalories(item) != null;
   }
 
-  bool _analysisAlreadySaved(Map<String, dynamic> item) {
-    return (_analysisSavedMealIdOf(item)?.isNotEmpty ?? false) ||
-        (_analysisIdOf(item).isNotEmpty &&
-            _analysisIdOf(_analysisResult ?? const {}) == _analysisIdOf(item) &&
-            (_savedMealId?.isNotEmpty ?? false));
-  }
-
   bool _analysisCanBeSaved(Map<String, dynamic> item) {
     return _historyStatusRaw(item).toUpperCase() == 'COMPLETED' &&
         _analysisFoodDetected(item) &&
-        _historyCalories(item) != null &&
-        !_analysisAlreadySaved(item);
+        _historyCalories(item) != null;
   }
 
   String _historyCacheOwner() {
@@ -472,6 +577,17 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     final owner = ownerRaw?.toString().trim().toLowerCase() ?? '';
     if (owner.isEmpty) return 'default';
     return owner.replaceAll(RegExp(r'[^a-z0-9@._-]'), '_');
+  }
+
+  bool get _canUseHistoryCache {
+    final ownerRaw =
+        _profile?['id'] ??
+        _profile?['userId'] ??
+        _profile?['user_id'] ??
+        _profile?['email'] ??
+        _profile?['username'];
+    final owner = ownerRaw?.toString().trim() ?? '';
+    return owner.isNotEmpty;
   }
 
   String _historyCacheKey() =>
@@ -488,6 +604,76 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
         '';
     if (id.isNotEmpty) return 'id:$id';
     return 'raw:${jsonEncode(item)}';
+  }
+
+  bool _isBlankHistoryValue(Object? value) {
+    if (value == null) return true;
+    if (value is String) return value.trim().isEmpty;
+    return false;
+  }
+
+  String? _historyLocalImageCandidate(Map<String, dynamic> item) {
+    const keys = <String>['imagePath', 'image_path', 'photo'];
+    for (final key in keys) {
+      final raw = item[key]?.toString().trim() ?? '';
+      if (raw.isEmpty ||
+          raw.startsWith('http://') ||
+          raw.startsWith('https://')) {
+        continue;
+      }
+      if (File(raw).existsSync()) return raw;
+    }
+    return null;
+  }
+
+  Map<String, dynamic> _mergeHistoryEntry(
+    Map<String, dynamic> preferred,
+    Map<String, dynamic> fallback,
+  ) {
+    final merged = Map<String, dynamic>.from(preferred);
+    fallback.forEach((key, value) {
+      if (_isBlankHistoryValue(merged[key]) && !_isBlankHistoryValue(value)) {
+        merged[key] = value;
+      }
+    });
+
+    final preferredLocal = _historyLocalImageCandidate(preferred);
+    if (preferredLocal == null) {
+      final fallbackLocal = _historyLocalImageCandidate(fallback);
+      if (fallbackLocal != null) {
+        merged['imagePath'] ??= fallbackLocal;
+        merged['image_path'] ??= fallbackLocal;
+        merged['photo'] ??= fallbackLocal;
+      }
+    }
+    return merged;
+  }
+
+  Future<String?> _persistAnalysisHistoryImage(
+    String sourcePath, {
+    required String analysisId,
+  }) async {
+    final rawPath = sourcePath.trim();
+    final rawId = analysisId.trim();
+    if (rawPath.isEmpty || rawId.isEmpty) return null;
+
+    final source = File(rawPath);
+    if (!await source.exists()) return null;
+
+    final docsDir = await getApplicationDocumentsDirectory();
+    final historyDir = Directory('${docsDir.path}/analysis_history_images');
+    if (!await historyDir.exists()) {
+      await historyDir.create(recursive: true);
+    }
+
+    final extIndex = rawPath.lastIndexOf('.');
+    final extension = extIndex >= 0 && extIndex < rawPath.length - 1
+        ? rawPath.substring(extIndex)
+        : '.jpg';
+    final safeId = rawId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+    final target = File('${historyDir.path}/analysis_$safeId$extension');
+    await source.copy(target.path);
+    return target.path;
   }
 
   List<Map<String, dynamic>> _filterDeletedHistoryItems(
@@ -520,13 +706,39 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
 
     for (final item in ordered) {
       final key = _historyIdentity(item);
-      merged.putIfAbsent(key, () => item);
+      final existing = merged[key];
+      if (existing == null) {
+        merged[key] = item;
+        continue;
+      }
+      merged[key] = _mergeHistoryEntry(existing, item);
     }
 
     return merged.values.take(_analysisHistoryLimit).toList();
   }
 
+  List<Map<String, dynamic>> _mergeRemoteHistoryItems(
+    List<Map<String, dynamic>> remote,
+    List<Map<String, dynamic>> current,
+  ) {
+    final currentByIdentity = <String, Map<String, dynamic>>{
+      for (final item in current)
+        _historyIdentity(item): Map<String, dynamic>.from(item),
+    };
+
+    return remote
+        .map((item) {
+          final normalized = Map<String, dynamic>.from(item);
+          final existing = currentByIdentity[_historyIdentity(normalized)];
+          if (existing == null) return normalized;
+          return _mergeHistoryEntry(normalized, existing);
+        })
+        .take(_analysisHistoryLimit)
+        .toList();
+  }
+
   Future<void> _loadCachedAnalysisHistory() async {
+    if (!_canUseHistoryCache) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_historyCacheKey());
@@ -550,6 +762,14 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
   }
 
   Future<void> _loadDeletedHistoryIds() async {
+    if (!_canUseHistoryCache) {
+      if (mounted && _deletedHistoryIds.isNotEmpty) {
+        setState(() => _deletedHistoryIds = <String>{});
+      } else {
+        _deletedHistoryIds = <String>{};
+      }
+      return;
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getStringList(_deletedHistoryCacheKey()) ?? const [];
@@ -577,6 +797,7 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
   Future<void> _saveCachedAnalysisHistory(
     List<Map<String, dynamic>> history,
   ) async {
+    if (!_canUseHistoryCache) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       final filtered = _filterDeletedHistoryItems(history);
@@ -585,6 +806,7 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
   }
 
   Future<void> _saveDeletedHistoryIds() async {
+    if (!_canUseHistoryCache) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setStringList(
@@ -592,6 +814,11 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
         _deletedHistoryIds.toList()..sort(),
       );
     } catch (_) {}
+  }
+
+  Future<void> _persistCurrentHistoryIfPossible() async {
+    if (!_canUseHistoryCache || _analysisHistory.isEmpty) return;
+    await _saveCachedAnalysisHistory(_analysisHistory);
   }
 
   Future<void> _rememberDeletedHistoryId(String analysisId) async {
@@ -660,7 +887,6 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
       _analysisHistory = updated;
       if (isCurrentResult) {
         _analysisResult = null;
-        _savedMealId = null;
       }
     });
     await _saveCachedAnalysisHistory(updated);
@@ -705,7 +931,7 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
           .whereType<Map>()
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
-      final merged = _mergeHistoryItems(
+      final merged = _mergeRemoteHistoryItems(
         _filterDeletedHistoryItems(incoming),
         _analysisHistory,
       );
@@ -724,17 +950,27 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
 
   Future<void> _loadProfile() async {
     final profile = await repository.getProfile();
-    if (!mounted || profile == null) return;
-    setState(() => _profile = profile);
+    if (!mounted) return;
+    if (profile != null) {
+      setState(() => _profile = profile);
+      await _persistCurrentHistoryIfPossible();
+    }
+  }
+
+  Future<void> _bootstrapAnalyzeScreen() async {
+    await _loadProfile();
     await _loadDeletedHistoryIds();
+    await _loadCachedAnalysisHistory();
     await _loadAnalysisHistory(showLoader: false);
   }
 
   Future<void> _refreshAnalyzeScreen() async {
     await _loadProfile();
+    await _loadDeletedHistoryIds();
     await _loadAnalysisHistory();
   }
 
+  ///Разрешение на камеру
   Future<XFile?> _pickImageFile(ImageSource source) async {
     PermissionStatus status;
     if (source == ImageSource.camera) {
@@ -761,6 +997,7 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     return _picker.pickImage(source: source, imageQuality: 85);
   }
 
+  ///Получение фото анализа
   Future<void> _pickAnalysisImage(ImageSource source) async {
     final image = await _pickImageFile(source);
     if (image == null || !mounted) return;
@@ -768,7 +1005,6 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     setState(() {
       _selectedImage = File(image.path);
       _analysisResult = null;
-      _savedMealId = null;
     });
   }
 
@@ -780,7 +1016,6 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
     setState(() {
       _isAnalyzing = true;
       _analysisResult = null;
-      _savedMealId = null;
     });
 
     final analysisId = await repository.startFoodAnalysis(
@@ -812,19 +1047,41 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
       final result = await repository.getAnalysisResult(analysisId);
       if (result != null) {
         final status = result['status']?.toString() ?? 'UNKNOWN';
+        final persistedImagePath = await _persistAnalysisHistoryImage(
+          selectedImagePath,
+          analysisId: analysisId,
+        );
         final historyItem = Map<String, dynamic>.from(result)
-          ..putIfAbsent('imagePath', () => selectedImagePath)
-          ..putIfAbsent('photo', () => selectedImagePath)
-          ..putIfAbsent('photo_url', () => selectedImagePath)
+          ..putIfAbsent(
+            'imagePath',
+            () => persistedImagePath ?? selectedImagePath,
+          )
+          ..putIfAbsent(
+            'image_path',
+            () => persistedImagePath ?? selectedImagePath,
+          )
+          ..putIfAbsent('photo', () => persistedImagePath ?? selectedImagePath)
           ..putIfAbsent('analysisId', () => analysisId)
           ..putIfAbsent('status', () => status)
-          ..putIfAbsent('createdAt', () => DateTime.now().toIso8601String());
+          ..putIfAbsent('createdAt', () => DateTime.now().toIso8601String())
+          ..putIfAbsent('analysisBasis', () => _selectedAnalysisBasis)
+          ..putIfAbsent('analysis_basis', () => _selectedAnalysisBasis);
 
         if (status == 'COMPLETED' && _analysisFoodDetected(result)) {
           if (!mounted) return;
 
-          setState(() => _analysisResult = result);
-          _savedMealId = result['saved_meal_id']?.toString();
+          final resolvedBasis = _normalizeAnalysisBasis(
+            result['analysisBasis']?.toString() ??
+                result['analysis_basis']?.toString() ??
+                _selectedAnalysisBasis,
+          );
+          setState(() {
+            _analysisResult = {
+              ...result,
+              'analysisBasis': resolvedBasis,
+              'analysis_basis': resolvedBasis,
+            };
+          });
           await _upsertHistoryItem(historyItem);
           if (!mounted) return;
 
@@ -888,7 +1145,6 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
       if (analysisId.isNotEmpty &&
           _analysisIdOf(_analysisResult ?? const {}) == analysisId) {
         _analysisResult = {...?_analysisResult, ...updated};
-        _savedMealId = mealId;
       }
     });
     await _upsertHistoryItem(updated);
@@ -900,157 +1156,729 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
       return;
     }
 
+    final totalCalories = _historyCalories(analysis);
+    final totalProteins = _readAnalysisMacro(analysis, 'protein');
+    final totalFats = _readAnalysisMacro(analysis, 'fats');
+    final totalCarbs = _readAnalysisMacro(analysis, 'carbs');
+    final analysisBasis = _analysisBasisOf(analysis);
+    final isPer100gBasis = analysisBasis == _analysisBasisPer100g;
+    final estimatedFullPortionWeight = _analysisEstimatedWeightGrams(analysis);
     final titleCtrl = TextEditingController(text: _historyDishName(analysis));
-    final caloriesCtrl = TextEditingController(
-      text: (analysis['calories'] ?? '').toString(),
-    );
-    final proteinsCtrl = TextEditingController(
-      text: (analysis['protein'] ?? '').toString(),
-    );
-    final fatsCtrl = TextEditingController(
-      text: (analysis['fats'] ?? '').toString(),
-    );
-    final carbsCtrl = TextEditingController(
-      text: (analysis['carbs'] ?? '').toString(),
-    );
-    final notesCtrl = TextEditingController();
     DateTime eatenAt = DateTime.now();
+    double fullPortionWeight = 250;
+    double eatenPercent = 100;
+
+    double normalizeWeight(double raw) {
+      final rounded = (raw / 5).round() * 5;
+      return rounded.clamp(25, 5000).toDouble();
+    }
+
+    double normalizePercent(double raw) => raw.clamp(1, 100).roundToDouble();
+
+    fullPortionWeight = normalizeWeight(
+      isPer100gBasis ? 250 : (estimatedFullPortionWeight ?? 250),
+    );
+
+    double consumedWeightGrams() {
+      final raw = fullPortionWeight * (eatenPercent / 100.0);
+      if (raw <= 0) return 0;
+      return raw.round().clamp(1, 5000).toDouble();
+    }
+
+    double maxWeightSliderValue() {
+      final roundedUp = ((fullPortionWeight / 100).ceil() * 100).toDouble();
+      return (roundedUp < 1000 ? 1000.0 : roundedUp)
+          .clamp(1000.0, 5000.0)
+          .toDouble();
+    }
+
+    double nutritionScale() => consumedWeightGrams() / 100.0;
+    double portionRatio() => eatenPercent / 100.0;
+
+    double? scaledMacro(double? sourceValue) {
+      if (sourceValue == null) return null;
+      if (isPer100gBasis) {
+        return sourceValue * nutritionScale();
+      }
+      return sourceValue * portionRatio();
+    }
+
+    int? savedCalories() {
+      if (totalCalories == null) return null;
+      final value = isPer100gBasis
+          ? totalCalories * nutritionScale()
+          : totalCalories * portionRatio();
+      return value.round();
+    }
+
+    int? fullPortionCalories() {
+      if (totalCalories == null) return null;
+      if (isPer100gBasis) {
+        return (totalCalories * (fullPortionWeight / 100.0)).round();
+      }
+      return totalCalories.round();
+    }
+
+    double? fullPortionMacro(double? sourceValue) {
+      if (sourceValue == null) return null;
+      if (isPer100gBasis) {
+        return sourceValue * (fullPortionWeight / 100.0);
+      }
+      return sourceValue;
+    }
+
+    String eatenAmountLabel() {
+      final gramsText = _isRu
+          ? '${_formatCompactValue(consumedWeightGrams())} г'
+          : '${_formatCompactValue(consumedWeightGrams())} g';
+      return '${eatenPercent.round()}% • $gramsText';
+    }
+
+    Widget buildFieldLabel(String text) {
+      return Padding(
+        padding: const EdgeInsets.only(left: 2, bottom: 10),
+        child: Text(
+          text,
+          style: TextStyle(
+            color: _cs.onSurface,
+            fontSize: 16.5,
+            fontWeight: FontWeight.w800,
+            height: 1.0,
+          ),
+        ),
+      );
+    }
+
+    Widget buildSectionCard({
+      required IconData icon,
+      required String title,
+      required String subtitle,
+      required Color accent,
+      required Widget child,
+    }) {
+      return AtelierSurfaceCard(
+        radius: 24,
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                AtelierIconBadge(icon: icon, accent: accent, size: 38),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          color: _cs.onSurface,
+                          fontSize: 16.5,
+                          fontWeight: FontWeight.w900,
+                          height: 1.0,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          color: _cs.onSurfaceVariant,
+                          fontWeight: FontWeight.w700,
+                          height: 1.25,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            child,
+          ],
+        ),
+      );
+    }
+
+    Widget buildPresetChip({
+      required String label,
+      required bool selected,
+      required VoidCallback onTap,
+    }) {
+      return ChoiceChip(
+        label: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+        selected: selected,
+        onSelected: (_) => onTap(),
+      );
+    }
+
+    Widget buildNutritionPreview({
+      required String title,
+      required Color accent,
+      required String calories,
+      required String proteins,
+      required String fats,
+      required String carbs,
+    }) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: _blendWithSurface(accent, 0.08),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: accent.withValues(alpha: 0.14)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                color: _cs.onSurface,
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '$calories ${tr(context, 'kcal')}',
+              style: TextStyle(
+                color: accent,
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+                height: 0.95,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                AtelierTagChip(
+                  label:
+                      '${tr(context, 'protein')}: $proteins ${tr(context, 'grams')}',
+                  foreground: _cs.primary,
+                ),
+                AtelierTagChip(
+                  label:
+                      '${tr(context, 'fats')}: $fats ${tr(context, 'grams')}',
+                  foreground: _cs.tertiary,
+                ),
+                AtelierTagChip(
+                  label:
+                      '${tr(context, 'carbs')}: $carbs ${tr(context, 'grams')}',
+                  foreground: _cs.secondary,
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
 
     final payload = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
+      isDismissible: true,
+      enableDrag: true,
       builder: (context) => StatefulBuilder(
-        builder: (context, setSheetState) => Padding(
-          padding: EdgeInsets.fromLTRB(
-            16,
-            16,
-            16,
-            MediaQuery.of(context).viewInsets.bottom + 20,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _isRu ? 'Сохранить как прием пищи' : 'Save as meal',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: titleCtrl,
-                  decoration: InputDecoration(
-                    labelText: _isRu ? 'Название' : 'Title',
+        builder: (context, setSheetState) => GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              16,
+              16,
+              MediaQuery.of(context).viewInsets.bottom + 20,
+            ),
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AtelierSheetHeader(
+                    title: _isRu ? 'Сохранить как прием пищи' : 'Save as meal',
+                    subtitle: _isRu
+                        ? 'Сначала выбери вес всей порции, потом задай процент съеденного. Остальное приложение посчитает само.'
+                        : 'First choose the full portion weight, then set the eaten percentage. The app will calculate the rest for you.',
+                    onClose: () => Navigator.of(context).maybePop(),
                   ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: caloriesCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: _isRu ? 'Калории' : 'Calories',
+                  const SizedBox(height: 18),
+                  buildFieldLabel(_isRu ? 'Название' : 'Title'),
+                  TextField(
+                    controller: titleCtrl,
+                    onTapOutside: (_) =>
+                        FocusManager.instance.primaryFocus?.unfocus(),
+                    decoration: InputDecoration(
+                      hintText: _isRu
+                          ? 'Например, овсянка с ягодами'
+                          : 'For example, oatmeal with berries',
+                    ),
                   ),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: proteinsCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
+                  const SizedBox(height: 16),
+                  buildSectionCard(
+                    icon: Icons.scale_rounded,
+                    title: _isRu ? 'Вся порция' : 'Full portion',
+                    subtitle: isPer100gBasis
+                        ? (_isRu
+                              ? 'Выбери примерный вес всей тарелки или упаковки, чтобы видеть граммы.'
+                              : 'Choose the approximate full plate or package weight to keep the grams preview accurate.')
+                        : (estimatedFullPortionWeight != null
+                              ? (_isRu
+                                    ? 'AI уже оценил порцию примерно в ${_formatCompactValue(estimatedFullPortionWeight)} г. Вес примерный, его можно поправить.'
+                                    : 'AI already estimated the portion at about ${_formatCompactValue(estimatedFullPortionWeight)} g. This weight is approximate and can be adjusted.')
+                              : (_isRu
+                                    ? 'AI оценил полную порцию, но вес всё равно примерный. При необходимости подправь его.'
+                                    : 'AI estimated the full portion, but the weight is still approximate. Adjust it if needed.')),
+                    accent: _cs.primary,
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _blendWithSurface(_cs.primary, 0.12),
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: Text(
+                                _isRu
+                                    ? '${_formatCompactValue(fullPortionWeight)} г'
+                                    : '${_formatCompactValue(fullPortionWeight)} g',
+                                style: TextStyle(
+                                  color: _cs.primary,
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w900,
+                                  height: 1.0,
+                                ),
+                              ),
+                            ),
+                            const Spacer(),
+                            IconButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  fullPortionWeight = normalizeWeight(
+                                    fullPortionWeight - 25,
+                                  );
+                                });
+                              },
+                              style: IconButton.styleFrom(
+                                backgroundColor: _panelBackground,
+                                foregroundColor: _cs.onSurface,
+                              ),
+                              icon: const Icon(Icons.remove_rounded),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  fullPortionWeight = normalizeWeight(
+                                    fullPortionWeight + 25,
+                                  );
+                                });
+                              },
+                              style: IconButton.styleFrom(
+                                backgroundColor: _cs.primary,
+                                foregroundColor: Colors.white,
+                              ),
+                              icon: const Icon(Icons.add_rounded),
+                            ),
+                          ],
                         ),
-                        decoration: const InputDecoration(labelText: 'Protein'),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            OutlinedButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  fullPortionWeight = normalizeWeight(
+                                    fullPortionWeight - 5,
+                                  );
+                                });
+                              },
+                              child: Text(_isRu ? '-5 г' : '-5 g'),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: SliderTheme(
+                                data: SliderTheme.of(context).copyWith(
+                                  trackHeight: 8,
+                                  thumbShape: const RoundSliderThumbShape(
+                                    enabledThumbRadius: 10,
+                                  ),
+                                  overlayShape: const RoundSliderOverlayShape(
+                                    overlayRadius: 18,
+                                  ),
+                                  activeTrackColor: _cs.primary,
+                                  inactiveTrackColor:
+                                      _cs.surfaceContainerHighest,
+                                  thumbColor: _cs.primary,
+                                  overlayColor: _cs.primary.withValues(
+                                    alpha: 0.12,
+                                  ),
+                                ),
+                                child: Slider(
+                                  value: fullPortionWeight.clamp(
+                                    25,
+                                    maxWeightSliderValue(),
+                                  ),
+                                  min: 25,
+                                  max: maxWeightSliderValue(),
+                                  onChanged: (raw) {
+                                    setSheetState(() {
+                                      fullPortionWeight = normalizeWeight(raw);
+                                    });
+                                  },
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            OutlinedButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  fullPortionWeight = normalizeWeight(
+                                    fullPortionWeight + 5,
+                                  );
+                                });
+                              },
+                              child: Text(_isRu ? '+5 г' : '+5 g'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [150, 200, 250, 300, 400, 500].map((grams) {
+                            return buildPresetChip(
+                              label: _isRu ? '$grams г' : '$grams g',
+                              selected: fullPortionWeight == grams,
+                              onTap: () {
+                                setSheetState(() {
+                                  fullPortionWeight = grams.toDouble();
+                                });
+                              },
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  buildSectionCard(
+                    icon: Icons.pie_chart_rounded,
+                    title: _isRu ? 'Съедено' : 'Eaten',
+                    subtitle: _isRu
+                        ? 'Укажи долю съеденного, а ниже сразу увидишь граммы'
+                        : 'Set the eaten share and see the grams below instantly',
+                    accent: _AnalyzeScreenState._accentOrange,
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _blendWithSurface(
+                                  _AnalyzeScreenState._accentOrange,
+                                  0.12,
+                                ),
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: Text(
+                                '${eatenPercent.round()}%',
+                                style: TextStyle(
+                                  color: _AnalyzeScreenState._accentOrangeDeep,
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.w900,
+                                  height: 1.0,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _isRu
+                                        ? '≈ ${_formatCompactValue(consumedWeightGrams())} г'
+                                        : '≈ ${_formatCompactValue(consumedWeightGrams())} g',
+                                    style: TextStyle(
+                                      color: _cs.onSurface,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900,
+                                      height: 1.0,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _isRu
+                                        ? '${_formatCompactValue(savedCalories())} ккал сохранится'
+                                        : '${_formatCompactValue(savedCalories())} kcal will be saved',
+                                    style: TextStyle(
+                                      color: _cs.onSurfaceVariant,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  eatenPercent = normalizePercent(
+                                    eatenPercent - 1,
+                                  );
+                                });
+                              },
+                              style: IconButton.styleFrom(
+                                backgroundColor: _panelBackground,
+                                foregroundColor: _cs.onSurface,
+                              ),
+                              icon: const Icon(Icons.remove_rounded),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              onPressed: () {
+                                setSheetState(() {
+                                  eatenPercent = normalizePercent(
+                                    eatenPercent + 1,
+                                  );
+                                });
+                              },
+                              style: IconButton.styleFrom(
+                                backgroundColor:
+                                    _AnalyzeScreenState._accentOrange,
+                                foregroundColor: Colors.white,
+                              ),
+                              icon: const Icon(Icons.add_rounded),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 10,
+                            thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 12,
+                            ),
+                            overlayShape: const RoundSliderOverlayShape(
+                              overlayRadius: 22,
+                            ),
+                            activeTrackColor: _AnalyzeScreenState._accentOrange,
+                            inactiveTrackColor: _cs.surfaceContainerHighest,
+                            thumbColor: _AnalyzeScreenState._accentOrangeDeep,
+                            overlayColor: _AnalyzeScreenState._accentOrange
+                                .withValues(alpha: 0.14),
+                          ),
+                          child: Slider(
+                            value: eatenPercent,
+                            min: 1,
+                            max: 100,
+                            divisions: 99,
+                            onChanged: (raw) {
+                              setSheetState(() {
+                                eatenPercent = normalizePercent(raw);
+                              });
+                            },
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            Text(
+                              '1%',
+                              style: TextStyle(
+                                color: _cs.onSurfaceVariant,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              _isRu ? 'доля съеденного' : 'eaten share',
+                              style: TextStyle(
+                                color: _cs.onSurfaceVariant,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              '100%',
+                              style: TextStyle(
+                                color: _cs.onSurfaceVariant,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [25, 50, 75, 100].map((percent) {
+                            return buildPresetChip(
+                              label: '$percent%',
+                              selected: eatenPercent == percent,
+                              onTap: () {
+                                setSheetState(() {
+                                  eatenPercent = percent.toDouble();
+                                });
+                              },
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: buildNutritionPreview(
+                          title: _isRu ? 'Вся порция' : 'Full portion',
+                          accent: _cs.primary,
+                          calories: _formatCompactValue(fullPortionCalories()),
+                          proteins: _formatCompactValue(
+                            fullPortionMacro(totalProteins),
+                          ),
+                          fats: _formatCompactValue(
+                            fullPortionMacro(totalFats),
+                          ),
+                          carbs: _formatCompactValue(
+                            fullPortionMacro(totalCarbs),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: buildNutritionPreview(
+                          title: _isRu ? 'Сохранится' : 'Will be saved',
+                          accent: _AnalyzeScreenState._accentOrange,
+                          calories: _formatCompactValue(savedCalories()),
+                          proteins: _formatCompactValue(
+                            scaledMacro(totalProteins),
+                          ),
+                          fats: _formatCompactValue(scaledMacro(totalFats)),
+                          carbs: _formatCompactValue(scaledMacro(totalCarbs)),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      isPer100gBasis
+                          ? (_isRu
+                                ? 'Основа расчёта: AI-оценка на 100 г.'
+                                : 'Calculation base: AI estimate per 100 g.')
+                          : (_isRu
+                                ? 'Основа расчёта: AI-оценка полной порции. Вес примерный.'
+                                : 'Calculation base: AI estimate for the full portion. Weight is approximate.'),
+                      style: TextStyle(
+                        color: _cs.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextField(
-                        controller: fatsCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: const InputDecoration(labelText: 'Fats'),
+                  ),
+                  const SizedBox(height: 16),
+                  buildFieldLabel(_isRu ? 'Когда съедено' : 'Eaten at'),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    tileColor: _panelBackground,
+                    title: Text(
+                      _isRu ? 'Дата и время' : 'Date and time',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextField(
-                        controller: carbsCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: const InputDecoration(labelText: 'Carbs'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(_isRu ? 'Когда съедено' : 'Eaten at'),
-                  subtitle: Text(_formatHistoryDate(eatenAt)),
-                  trailing: const Icon(Icons.schedule_rounded),
-                  onTap: () async {
-                    final date = await showDatePicker(
-                      context: context,
-                      initialDate: eatenAt,
-                      firstDate: DateTime(2020),
-                      lastDate: DateTime.now().add(const Duration(days: 365)),
-                    );
-                    if (date == null || !context.mounted) return;
-                    final time = await showTimePicker(
-                      context: context,
-                      initialTime: TimeOfDay.fromDateTime(eatenAt),
-                    );
-                    if (time == null) return;
-                    setSheetState(() {
-                      eatenAt = DateTime(
-                        date.year,
-                        date.month,
-                        date.day,
-                        time.hour,
-                        time.minute,
+                    subtitle: Text(_formatHistoryDate(eatenAt)),
+                    trailing: const Icon(Icons.schedule_rounded),
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: eatenAt,
+                        firstDate: DateTime(2020),
+                        lastDate: DateTime.now().add(const Duration(days: 365)),
                       );
-                    });
-                  },
-                ),
-                TextField(
-                  controller: notesCtrl,
-                  maxLines: 3,
-                  decoration: InputDecoration(
-                    labelText: _isRu ? 'Заметки' : 'Notes',
-                  ),
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: () {
-                      Navigator.of(context).pop({
-                        'title': titleCtrl.text.trim(),
-                        'calories': int.tryParse(caloriesCtrl.text.trim()),
-                        'proteins': double.tryParse(
-                          proteinsCtrl.text.trim().replaceAll(',', '.'),
-                        ),
-                        'fats': double.tryParse(
-                          fatsCtrl.text.trim().replaceAll(',', '.'),
-                        ),
-                        'carbohydrates': double.tryParse(
-                          carbsCtrl.text.trim().replaceAll(',', '.'),
-                        ),
-                        'eatenAt': eatenAt.toIso8601String(),
-                        'notes': notesCtrl.text.trim().isEmpty
-                            ? null
-                            : notesCtrl.text.trim(),
+                      if (date == null || !context.mounted) return;
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: TimeOfDay.fromDateTime(eatenAt),
+                      );
+                      if (time == null) return;
+                      setSheetState(() {
+                        eatenAt = DateTime(
+                          date.year,
+                          date.month,
+                          date.day,
+                          time.hour,
+                          time.minute,
+                        );
                       });
                     },
-                    child: Text(_isRu ? 'Сохранить' : 'Save'),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.of(context).maybePop(),
+                          child: Text(_isRu ? 'Отмена' : 'Cancel'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () {
+                            Navigator.of(context).pop({
+                              'title': titleCtrl.text.trim().isEmpty
+                                  ? _historyDishName(analysis)
+                                  : titleCtrl.text.trim(),
+                              'calories': savedCalories(),
+                              'proteins': scaledMacro(totalProteins),
+                              'fats': scaledMacro(totalFats),
+                              'carbohydrates': scaledMacro(totalCarbs),
+                              'eatenAt': eatenAt.toIso8601String(),
+                              'amountEaten': eatenAmountLabel(),
+                              'amountMode': 'PERCENT',
+                              'eatenRatio': eatenPercent / 100.0,
+                              'totalWeightGrams': fullPortionWeight,
+                              'eatenWeightGrams': consumedWeightGrams(),
+                              'packageFractionNumerator': null,
+                              'packageFractionDenominator': null,
+                              'fullPortionCalories': fullPortionCalories(),
+                              'fullPortionProteins': fullPortionMacro(
+                                totalProteins,
+                              ),
+                              'fullPortionFats': fullPortionMacro(totalFats),
+                              'fullPortionCarbohydrates': fullPortionMacro(
+                                totalCarbs,
+                              ),
+                              'notes': null,
+                            });
+                          },
+                          child: Text(_isRu ? 'Сохранить' : 'Save'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -1078,6 +1906,8 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
 
   Future<void> _saveAnalysisAsMeal() async {
     if (_analysisResult == null) return;
+
+    // Сразу сохраняем по анализу без диалога выбора
     await _saveAnalysisItemAsMeal(_analysisResult!);
   }
 
@@ -1090,10 +1920,6 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
       appBar: AppTopBar(
         title: tr(context, 'tab_analyze'),
         actions: [
-          AppTopAction(
-            icon: Icons.refresh_rounded,
-            onPressed: _refreshAnalyzeScreen,
-          ),
           AppTopAction(
             icon: Icons.settings_rounded,
             tooltip: tr(context, 'settings'),
@@ -1108,9 +1934,9 @@ class _AnalyzeScreenState extends State<AnalyzeScreen>
           children: [
             _buildImagePickerCard(),
             const SizedBox(height: 24),
-            _buildQuestionsCard(),
-            const SizedBox(height: 24),
             _buildAnalyzeButton(),
+            const SizedBox(height: 24),
+            _buildQuestionsCard(),
             const SizedBox(height: 24),
             if (_analysisResult != null) _buildResultCard(),
             if (_analysisResult != null) const SizedBox(height: 24),

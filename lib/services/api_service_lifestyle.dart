@@ -1,6 +1,102 @@
 part of 'api_service.dart';
 
 extension ApiServiceLifestyleMethods on ApiService {
+  Future<List<Map<String, dynamic>>> searchProductCatalog({
+    required String query,
+    String? country,
+    int page = 1,
+    int size = 12,
+  }) async {
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.isEmpty) return const [];
+
+    final params = <String, String>{
+      'q': normalizedQuery,
+      'page': (page < 1 ? 1 : page).toString(),
+      'size': (size < 1 ? 12 : size).toString(),
+    };
+    final normalizedCountry = country?.trim();
+    if (normalizedCountry != null && normalizedCountry.isNotEmpty) {
+      params['country'] = normalizedCountry;
+    }
+
+    final url = Uri.parse(
+      '${ApiService.baseUrl}/api/recipes/db/products/search',
+    ).replace(queryParameters: params);
+    final response = _ensureSuccess(
+      await _getWithAuth(url),
+      fallbackMessage: 'Failed to load product catalog search results',
+    );
+    return _asMapList(_decodeJsonBody(response.body));
+  }
+
+  Future<Map<String, dynamic>?> getProductCatalogItem(String code) async {
+    final normalizedCode = code.trim();
+    if (normalizedCode.isEmpty) return null;
+    final url = Uri.parse(
+      '${ApiService.baseUrl}/api/recipes/db/products/$normalizedCode',
+    );
+    try {
+      final response = _ensureSuccess(
+        await _getWithAuth(url),
+        fallbackMessage: 'Failed to load product catalog item',
+      );
+      return _asMap(_decodeJsonBody(response.body));
+    } on ApiException catch (error) {
+      if (error.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>?> searchProductCatalogPage({
+    required String query,
+    String? country,
+    int page = 1,
+    int size = 20,
+  }) async {
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.isEmpty) return null;
+
+    final params = <String, String>{
+      'q': normalizedQuery,
+      'page': (page < 1 ? 1 : page).toString(),
+      'size': (size < 1 ? 20 : size).toString(),
+    };
+    final normalizedCountry = country?.trim();
+    if (normalizedCountry != null && normalizedCountry.isNotEmpty) {
+      params['country'] = normalizedCountry;
+    }
+
+    final url = Uri.parse(
+      '${ApiService.baseUrl}/api/recipes/db/products/search-page',
+    ).replace(queryParameters: params);
+    final response = _ensureSuccess(
+      await _getWithAuth(url),
+      fallbackMessage: 'Failed to load paged product catalog results',
+    );
+    return _asMap(_decodeJsonBody(response.body));
+  }
+
+  Future<Map<String, dynamic>?> lookupProductCatalogBarcode(
+    String barcode,
+  ) async {
+    final normalizedBarcode = barcode.trim();
+    if (normalizedBarcode.isEmpty) return null;
+    final url = Uri.parse(
+      '${ApiService.baseUrl}/api/recipes/db/products/barcode/$normalizedBarcode',
+    );
+    try {
+      final response = _ensureSuccess(
+        await _getWithAuth(url),
+        fallbackMessage: 'Failed to lookup product barcode',
+      );
+      return _asMap(_decodeJsonBody(response.body));
+    } on ApiException catch (error) {
+      if (error.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getPantryItems() async {
     final url = Uri.parse('${ApiService.baseUrl}/api/pantry');
     final response = _ensureSuccess(
@@ -102,13 +198,14 @@ extension ApiServiceLifestyleMethods on ApiService {
     }
 
     try {
+      final requestRevision = _sessionRevision;
       var response = await sendOnce();
       if (response.statusCode == 401 || response.statusCode == 403) {
         final refreshed = await _refreshToken();
         if (refreshed) {
           response = await sendOnce();
         } else {
-          await logout();
+          await _logoutIfSessionUnchanged(requestRevision);
           return null;
         }
       }
@@ -518,10 +615,43 @@ extension ApiServiceLifestyleMethods on ApiService {
     try {
       final response = await _postWithAuth(url, body: jsonEncode(data));
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return _asMap(jsonDecode(response.body));
+        final result = _asMap(jsonDecode(response.body));
+        _emitMealSignal(result);
+        return result;
       }
     } catch (e) {
       print('createMeal error: $e');
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> getMealById(String mealEntryId) async {
+    final url = Uri.parse('${ApiService.baseUrl}/api/meals/$mealEntryId');
+    try {
+      final response = await _getWithAuth(url);
+      if (response.statusCode == 200) {
+        return _asMap(jsonDecode(response.body));
+      }
+    } catch (e) {
+      print('getMealById error: $e');
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> updateMeal(
+    String mealEntryId,
+    Map<String, dynamic> data,
+  ) async {
+    final url = Uri.parse('${ApiService.baseUrl}/api/meals/$mealEntryId');
+    try {
+      final response = await _putWithAuth(url, body: jsonEncode(data));
+      if (response.statusCode == 200) {
+        final result = _asMap(jsonDecode(response.body));
+        _emitMealSignal(result);
+        return result;
+      }
+    } catch (e) {
+      print('updateMeal error: $e');
     }
     return null;
   }
@@ -530,7 +660,11 @@ extension ApiServiceLifestyleMethods on ApiService {
     final url = Uri.parse('${ApiService.baseUrl}/api/meals/$mealEntryId');
     try {
       final response = await _deleteWithAuth(url);
-      return response.statusCode == 204 || response.statusCode == 200;
+      final success = response.statusCode == 204 || response.statusCode == 200;
+      if (success) {
+        _emitMealSignal();
+      }
+      return success;
     } catch (e) {
       print('deleteMeal error: $e');
       return false;
@@ -547,7 +681,9 @@ extension ApiServiceLifestyleMethods on ApiService {
     try {
       final response = await _postWithAuth(url, body: jsonEncode(data));
       if (response.statusCode == 200) {
-        return _asMap(jsonDecode(response.body));
+        final result = _asMap(jsonDecode(response.body));
+        _emitMealSignal(result);
+        return result;
       }
     } catch (e) {
       print('saveFoodAnalysis error: $e');
